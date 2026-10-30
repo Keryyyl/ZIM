@@ -4,7 +4,7 @@ import TagChip, { ColorPicker, TAG_COLORS } from '../TagChip'
 import { guessSmtp } from '@shared/smtp'
 import { ACCENTS, type Theme, type ThemeMode } from './theme'
 import { FOLDERS, type FolderId } from './folders'
-import { SIDEBAR_SHORTCUT } from './sidebar'
+import { RIGHT_SIDEBAR_SHORTCUT, SIDEBAR_SHORTCUT } from './sidebar'
 import { SHORTCUT_ACTIONS, type ShortcutAction, type ShortcutMap } from './shortcuts'
 
 type Section = 'themes' | 'folders' | 'tags' | 'accounts' | 'shortcuts' | 'about'
@@ -622,7 +622,13 @@ function Shortcuts({
             <td>
               <kbd>{SIDEBAR_SHORTCUT}</kbd>
             </td>
-            <td>Pokaż / ukryj pasek boczny</td>
+            <td>Pokaż / ukryj lewy pasek boczny</td>
+          </tr>
+          <tr>
+            <td>
+              <kbd>{RIGHT_SIDEBAR_SHORTCUT}</kbd>
+            </td>
+            <td>Pokaż / ukryj prawy pasek boczny (kontakty)</td>
           </tr>
           <tr>
             <td>

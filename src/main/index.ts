@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'crypto'
 import { copyFile, readFile, stat } from 'fs/promises'
-import { basename, join } from 'path'
+import { basename, extname, join } from 'path'
 import { openDb } from './db'
 import { getAttachment } from './db/attachments'
 import { CACHE_LIMIT, fetchAttachment, pruneCache } from './mail/attachment-cache'
@@ -30,6 +30,7 @@ import {
   searchMessages,
   setStarred
 } from './db/messages'
+import { contactMail, deleteContact, listContacts, saveContact } from './db/contacts'
 import { createTag, deleteTag, listTags, setMessageTag, updateTag } from './db/tags'
 import { syncAccount } from './mail/sync'
 import { createSecretStore } from './secrets'
@@ -257,6 +258,29 @@ app.whenReady().then(() => {
   ipcMain.handle('messages:tag', (_e, ids: unknown, tagId: unknown, on: unknown) => {
     if (!Number.isInteger(tagId)) throw new Error('Nieznany tag')
     setMessageTag(db, sanitizeIds(ids), tagId as number, on === true)
+  })
+
+  ipcMain.handle('contacts:list', () => listContacts(db))
+  ipcMain.handle('contacts:save', (_e, contact: unknown) => saveContact(db, contact))
+  ipcMain.handle('contacts:mail', (_e, id: unknown) => (Number.isInteger(id) ? contactMail(db, id as number) : []))
+  ipcMain.handle('contacts:delete', (_e, id: unknown) => {
+    if (Number.isInteger(id)) deleteContact(db, id as number)
+  })
+  // zdjęcie wraca jako data URL (CSP renderera dopuszcza img-src data:), ścieżka nie opuszcza main
+  ipcMain.handle('contacts:pickPhoto', async (e): Promise<string | null> => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: 'Wybierz zdjęcie',
+      properties: ['openFile'],
+      filters: [{ name: 'Obrazy', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths[0]) return null
+    const path = result.filePaths[0]
+    if ((await stat(path)).size > 1_000_000) throw new Error('Zdjęcie jest za duże (najwyżej 1 MB)')
+    const ext = extname(path).slice(1).toLowerCase()
+    const mime = ext === 'jpg' ? 'jpeg' : ext
+    return `data:image/${mime};base64,${(await readFile(path)).toString('base64')}`
   })
 
   ipcMain.handle('attachments:open', async (e, id: unknown) => {

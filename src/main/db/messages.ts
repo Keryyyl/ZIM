@@ -48,8 +48,12 @@ function withTags(db: Database.Database, rows: RawRow[]): MessageRow[] {
 export function listMessages(db: Database.Database, query: MessageQuery): MessageRow[] {
   const view: MailboxView = VIEWS.includes(query.view) ? query.view : 'inbox'
   const tagId = Number.isInteger(query.tagId) ? query.tagId : null
+  const correspondent = typeof query.correspondent === 'string' && query.correspondent.trim() ? query.correspondent.trim().toLowerCase() : null
+  // instr zamiast LIKE: znaki % i _ w adresie nie mogą działać jak wzorzec
   const where =
-    tagId !== null
+    correspondent !== null
+      ? "folder != 'deleted' AND (instr(lower(from_addr), @correspondent) > 0 OR instr(lower(to_addr), @correspondent) > 0)"
+      : tagId !== null
       ? "folder IN ('inbox', 'archive') AND EXISTS (SELECT 1 FROM message_tags mt WHERE mt.message_id = messages.id AND mt.tag_id = @tagId)"
       : view === 'starred'
         ? "starred = 1 AND folder IN ('inbox', 'archive')"
@@ -63,7 +67,7 @@ export function listMessages(db: Database.Database, query: MessageQuery): Messag
        WHERE ${where} AND (@accountId IS NULL OR account_id = @accountId)
        ORDER BY date DESC LIMIT ${LIMIT}`
     )
-    .all({ view, tagId, accountId: query.accountId ?? null }) as RawRow[]
+    .all({ view, tagId, correspondent, accountId: query.accountId ?? null }) as RawRow[]
   return withTags(db, rows)
 }
 

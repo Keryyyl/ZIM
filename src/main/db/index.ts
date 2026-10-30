@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS message_tags (
   PRIMARY KEY (message_id, tag_id)
 );
 
+CREATE TABLE IF NOT EXISTS contacts (
+  id INTEGER PRIMARY KEY,
+  photo TEXT, -- data URL (zdjęcie zostaje lokalnie, w bazie)
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  city TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  services TEXT NOT NULL DEFAULT '[]' -- JSON: [{ service, username }]
+);
+
 CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,

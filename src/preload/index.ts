@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ContactInit, ContactMail } from '@shared/contact'
 import type {
   Account,
   Folder,
@@ -26,6 +27,12 @@ const api = {
   markSpam: (ids: number[]): Promise<number> => ipcRenderer.invoke('messages:spam', ids),
   markNotSpam: (ids: number[]): Promise<void> => ipcRenderer.invoke('messages:notSpam', ids),
   deleteForever: (ids: number[]): Promise<void> => ipcRenderer.invoke('messages:deleteForever', ids),
+  listContacts: (): Promise<ContactInit[]> => ipcRenderer.invoke('contacts:list'),
+  saveContact: (contact: ContactInit): Promise<ContactInit> => ipcRenderer.invoke('contacts:save', contact),
+  contactMail: (id: number): Promise<ContactMail[]> => ipcRenderer.invoke('contacts:mail', id),
+  deleteContact: (id: number): Promise<void> => ipcRenderer.invoke('contacts:delete', id),
+  /** Okno wyboru zdjęcia; zwraca data URL albo null po anulowaniu */
+  pickContactPhoto: (): Promise<string | null> => ipcRenderer.invoke('contacts:pickPhoto'),
   listTags: (): Promise<Tag[]> => ipcRenderer.invoke('tags:list'),
   createTag: (name: string, color: string | null): Promise<Tag> => ipcRenderer.invoke('tags:create', name, color),
   updateTag: (id: number, name: string, color: string | null): Promise<Tag> =>

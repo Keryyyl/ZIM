@@ -39,6 +39,8 @@ export interface MessageQuery {
   view: MailboxView
   /** Tylko wiadomości z tym tagiem (z odebranych i archiwum), niezależnie od `view` */
   tagId?: number | null
+  /** Cała korespondencja z tym adresem (od niego i do niego, wszystkie foldery poza usuniętymi) */
+  correspondent?: string | null
 }
 
 /** Wiersz listy wiadomości (bez treści) */

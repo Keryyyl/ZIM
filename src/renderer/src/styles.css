@@ -1261,8 +1261,12 @@ kbd {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-.search-btn {
+.compose-icon {
   margin-left: auto;
+}
+.compose-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .search {
   display: flex;
@@ -1404,6 +1408,10 @@ kbd {
 .row .date {
   width: 56px;
   text-align: right;
+  font-family: 'Geist Variable', 'Geist', 'Inter Variable', sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  font-size: 14px;
   color: var(--row-date);
   font-weight: 400;
 }
@@ -1892,11 +1900,35 @@ kbd {
 }
 
 /* Chowanie paska bocznego */
-.app.sidebar-collapsed {
-  grid-template-columns: 1fr;
+/* trzy kolumny: lewy pasek, lista, prawy pasek; chowanie zeruje szerokość kolumny */
+.app {
+  grid-template-columns: 188px minmax(0, 1fr) 280px;
 }
-.app.sidebar-collapsed .sidebar {
+.app.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 280px;
+}
+.app.right-collapsed {
+  grid-template-columns: 188px minmax(0, 1fr) 0;
+}
+.app.sidebar-collapsed.right-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+.sidebar-left {
+  grid-column: 1;
+}
+.app > .list {
+  grid-column: 2;
+}
+.sidebar-right {
+  grid-column: 3;
+}
+.app.sidebar-collapsed .sidebar-left,
+.app.right-collapsed .sidebar-right {
   display: none;
+}
+/* przycisk prawego paska stoi po prawej od ustawień, bez przesunięcia jak w lewym */
+.list-title .gear + .sidebar-toggle {
+  margin-left: 0;
 }
 .sidebar-toggle {
   flex-shrink: 0;
@@ -1905,4 +1937,391 @@ kbd {
 /* pod przyciskami okna macOS, które w tym trybie nie mają nad sobą paska bocznego */
 :root[data-platform='mac'] .app.sidebar-collapsed .list-title {
   padding-left: 72px;
+}
+
+/* Kontakty */
+.sidebar-right {
+  min-width: 0;
+}
+.contacts {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.contacts-title {
+  margin: 0 0 12px 10px;
+  font-size: 15px;
+  font-weight: 650;
+}
+.contact-list {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+.contact-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.contact-row:hover {
+  background: var(--hover);
+}
+.contact-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.contact-dialog button:not(.icon-btn) {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.contact-dialog button:not(.icon-btn):hover {
+  background: var(--hover);
+}
+.avatar {
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.avatar-empty {
+  display: inline-grid;
+  place-items: center;
+  background: var(--hover);
+  color: var(--muted);
+  font-weight: 600;
+}
+.contacts-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px 0;
+  border-top: 1px solid var(--border);
+}
+.contacts-brand {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.contacts-footer .icon-btn {
+  font-size: 18px;
+  line-height: 1;
+}
+.contacts-footer .icon-btn.active {
+  background: var(--danger);
+  color: #fff;
+}
+.contacts.deleting .contact-row {
+  cursor: pointer;
+}
+.contacts.deleting .contact-row:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.contacts-error {
+  margin: 0 10px 8px;
+}
+.contact-dialog {
+  width: min(460px, calc(100vw - 64px));
+  padding: 24px;
+  gap: 12px;
+  overflow-y: auto;
+}
+.contact-dialog h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.contact-dialog label,
+.contact-services {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.contact-dialog input,
+.contact-dialog textarea {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.contact-dialog input:focus,
+.contact-dialog textarea:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.contact-photo-row,
+.contact-service-row,
+.contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.contact-service-row input {
+  flex: 1;
+  min-width: 0;
+}
+.contact-services > button {
+  align-self: flex-start;
+}
+.contact-actions {
+  justify-content: flex-end;
+}
+.contact-dialog .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Ekran kontaktu */
+.contact-row {
+  cursor: pointer;
+}
+.contact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  padding: 0 4px;
+  overflow-y: auto;
+}
+.contact-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.contact-card-head h3 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  font-weight: 650;
+}
+.contact-card-id {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.contact-card-id a,
+.contact-card-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.contact-card-desc {
+  margin: 0;
+}
+.contact-card-mail h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+.contact-card-mail ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.contact-card-mail .mail-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: calc(100% + 12px);
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.contact-card-mail .mail-item:hover {
+  background: var(--hover);
+}
+.mail-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contact-card-mail time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.contact-card-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.contact-card-links > * {
+  overflow-wrap: anywhere;
+}
+.contact-card-id > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contacts-footer .icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Własny checkbox: zaokrąglony, w kolorze akcentu, ze znacznikiem rysowanym maską */
+.check,
+.row .check {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--muted) 70%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.check::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  transform: scale(0);
+  transition: transform 0.1s ease-out;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.check:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.check:checked,
+.check:indeterminate {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.check:checked::after {
+  transform: scale(1);
+}
+/* częściowe zaznaczenie ("zaznacz wszystkie"): kreska zamiast ptaszka */
+.check:indeterminate::after {
+  transform: scale(1);
+  -webkit-mask: none;
+  mask: none;
+  height: 2px;
+  border-radius: 1px;
+}
+.check:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.check:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Własny kolor tagu: ostatnia pastylka palety i prosty picker RGB */
+.color-picker {
+  align-items: center;
+}
+.custom-color {
+  position: relative;
+  display: inline-flex;
+}
+.swatch-custom:not(.on) {
+  background: conic-gradient(#ef4444, #f59e0b, #10b981, #06b6d4, #3b82f6, #8b5cf6, #ec4899, #ef4444);
+}
+.rgb-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 220px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 40px #0004;
+}
+.rgb-preview {
+  height: 28px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px #0002;
+}
+.rgb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rgb-row > span {
+  width: 10px;
+  text-align: center;
+  font-weight: 600;
+}
+.rgb-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  border-radius: 3px;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+}
+.rgb-row input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 4px #0006;
+}
+.rgb-row input[type='number'],
+.rgb-hex {
+  width: 52px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.rgb-hex {
+  flex: 1;
+  width: auto;
+  text-transform: lowercase;
+}
+.rgb-row input[type='number']:focus,
+.rgb-hex:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
 }

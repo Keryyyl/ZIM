@@ -4,11 +4,12 @@ import MessageList, { accountLabel } from './MessageList'
 import Reader from './reader/Reader'
 import Compose from './compose/Compose'
 import ScheduledList from './compose/ScheduledList'
+import ContactsScreen from './contacts/ContactsScreen'
 import Settings from './settings/Settings'
 import { useTheme } from './settings/theme'
 import { useShortcuts } from './settings/shortcuts'
 import { FOLDERS, useHiddenFolders } from './settings/folders'
-import { useSidebarCollapsed } from './settings/sidebar'
+import { useRightSidebarCollapsed, useSidebarCollapsed } from './settings/sidebar'
 
 type View = MailboxView | 'scheduled'
 
@@ -44,6 +45,7 @@ export default function App(): JSX.Element {
   const [hiddenFolders, setFolderHidden] = useHiddenFolders()
   const [shortcuts, setShortcut] = useShortcuts()
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
+  const [rightCollapsed, toggleRight] = useRightSidebarCollapsed()
   const [sync, setSync] = useState<Record<number, SyncStatus>>({})
   const [accounts, setAccounts] = useState<Account[]>([])
   // null = "Wszystko" (zunifikowana skrzynka), liczba = id konta
@@ -52,6 +54,8 @@ export default function App(): JSX.Element {
   // lista tagów w sidebarze; wybrany tag filtruje wiadomości z odebranych i archiwum
   const [tags, setTags] = useState<Tag[]>([])
   const [tagFilter, setTagFilter] = useState<number | null>(null)
+  // historia korespondencji z kontaktem (przycisk w prawym pasku)
+  const [correspondent, setCorrespondent] = useState<{ email: string; name: string } | null>(null)
   // zwiększane po akcji na wiadomościach, żeby pobrać listę od nowa
   const [version, setVersion] = useState(0)
   // wiadomość otwarta w czytniku
@@ -99,7 +103,7 @@ export default function App(): JSX.Element {
       if (view === 'scheduled') return
       const request = query
         ? window.api.searchMessages({ accountId: inbox, text: query })
-        : window.api.listMessages({ accountId: inbox, view, tagId: tagFilter })
+        : window.api.listMessages({ accountId: inbox, view, tagId: tagFilter, correspondent: correspondent?.email })
       void request.then((rows) => current && setMessages(rows))
     }
     refresh()
@@ -111,7 +115,7 @@ export default function App(): JSX.Element {
       current = false
       unsubscribe()
     }
-  }, [inbox, view, tagFilter, accounts, version, query])
+  }, [inbox, view, tagFilter, correspondent, accounts, version, query])
 
   // ukryty folder dalej istnieje w tle; jeśli właśnie go oglądamy, wracamy do odebranych
   useEffect(() => {
@@ -119,7 +123,7 @@ export default function App(): JSX.Element {
   }, [hiddenFolders, view])
 
   // skróty działają w czytniku; wyłączone w polach tekstowych, przy pisaniu i w ustawieniach
-  const keyState = { openId, messages, view: tagFilter !== null ? ('starred' as const) : view, shortcuts, blocked: composeOpen || settingsOpen }
+  const keyState = { openId, messages, view: tagFilter !== null || correspondent ? ('starred' as const) : view, shortcuts, blocked: composeOpen || settingsOpen }
   const keyRef = useRef(keyState)
   keyRef.current = keyState
 
@@ -178,6 +182,7 @@ export default function App(): JSX.Element {
         if (!folder || nav.hidden.has(folder.id)) return
         setView(folder.id)
         setTagFilter(null)
+        setCorrespondent(null)
         setSearch('')
       } else if (key === 'g') {
         gAt = Date.now()
@@ -191,54 +196,55 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Cmd/Ctrl+B chowa i przywraca pasek boczny (działa też w polu szukania)
+  // Cmd/Ctrl+B chowa lewy pasek, Cmd/Ctrl+Shift+B prawy (działa też w polu szukania)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'b') return
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== 'b') return
       if (navRef.current.blocked) return
       e.preventDefault()
-      toggleSidebar()
+      if (e.shiftKey) toggleRight()
+      else toggleSidebar()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const openCompose = (): void => {
+    setReplyTo(undefined)
+    setComposeOpen(true)
+  }
+  const composeTo = (to: string): void => {
+    const accountId = inbox ?? accounts[0]?.id
+    if (accountId === undefined) return
+    setReplyTo({ accountId, to, subject: '' })
+    setComposeOpen(true)
+  }
+  const showCorrespondence = (email: string, name: string): void => {
+    setView('inbox')
+    setTagFilter(null)
+    setSearch('')
+    setCorrespondent({ email, name })
+  }
   const closeReader = useCallback(() => setOpenId(null), [])
   const accountsById = new Map(accounts.map((a) => [a.id, a]))
   const selected = inbox === null ? null : accountsById.get(inbox)
   const filterTag = tags.find((t) => t.id === tagFilter)
-  const viewLabel = filterTag ? filterTag.name : VIEWS.find((v) => v.id === view)!.label
+  const viewLabel = correspondent ? correspondent.name : filterTag ? filterTag.name : VIEWS.find((v) => v.id === view)!.label
 
   return (
-    <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}`}>
       <div className="titlebar-drag" />
-      <aside className="sidebar">
+      <aside className="sidebar sidebar-left">
         <h1>ZIM</h1>
-        <button
-          className="compose-btn"
-          onClick={() => {
-            setReplyTo(undefined)
-            setComposeOpen(true)
-          }}
-          disabled={accounts.length === 0}
-          aria-label="Nowa wiadomość"
-          title={accounts.length === 0 ? 'Najpierw dodaj konto w ustawieniach' : 'Nowa wiadomość'}
-        >
-          <span className="compose-plus">+</span>
-          <span className="compose-label">Napisz</span>
-          <kbd className="hint">
-            <span />
-            <span>C</span>
-          </kbd>
-        </button>
         <nav>
           {VIEWS.filter((v) => !hiddenFolders.has(v.id)).map((v) => (
             <button
               key={v.id}
-              className={`view ${view === v.id && tagFilter === null ? 'active' : ''}`}
+              className={`view ${view === v.id && tagFilter === null && !correspondent ? 'active' : ''}`}
               onClick={() => {
                 setView(v.id)
                 setTagFilter(null)
+                setCorrespondent(null)
                 setSearch('')
               }}
             >
@@ -260,6 +266,7 @@ export default function App(): JSX.Element {
                 onClick={() => {
                   setView('inbox')
                   setTagFilter(t.id)
+                  setCorrespondent(null)
                   setSearch('')
                 }}
               >
@@ -273,23 +280,15 @@ export default function App(): JSX.Element {
         )}
         <div className="sidebar-footer">
           <SyncIndicator statuses={Object.values(sync)} />
-          <button
-            className="icon-btn gear"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Ustawienia"
-            title="Ustawienia"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-              strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z" />
-            </svg>
-          </button>
         </div>
       </aside>
       {view === 'scheduled' ? (
         <ScheduledList
           onToggleSidebar={toggleSidebar}
+          onCompose={openCompose}
+          composeDisabled={accounts.length === 0}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onToggleRight={toggleRight}
           key={`${inbox ?? 'all'}:scheduled`}
           title={`${selected ? accountLabel(selected) : 'Wszystko'} · ${viewLabel}`}
           accountId={inbox}
@@ -299,13 +298,17 @@ export default function App(): JSX.Element {
       ) : (
         <MessageList
           onToggleSidebar={toggleSidebar}
+          onCompose={openCompose}
+          composeDisabled={accounts.length === 0}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onToggleRight={toggleRight}
           // nowa skrzynka/folder = świeże zaznaczenie
-          key={`${inbox ?? 'all'}:${view}:${tagFilter}`}
+          key={`${inbox ?? 'all'}:${view}:${tagFilter}:${correspondent?.email ?? ''}`}
           title={viewLabel}
           subtitle={selected?.alias ? selected.email : null}
           // widok tagu miesza odebrane i archiwum, tak jak gwiazdki, więc ma te same akcje
-          view={tagFilter !== null ? 'starred' : view}
-          emptyText={filterTag ? 'Żadna wiadomość nie ma tego tagu.' : undefined}
+          view={tagFilter !== null || correspondent ? 'starred' : view}
+          emptyText={correspondent ? 'Brak korespondencji z tym kontaktem.' : filterTag ? 'Żadna wiadomość nie ma tego tagu.' : undefined}
           messages={messages}
           accountsById={accountsById}
           // w pojedynczej skrzynce etykieta konta byłaby taka sama w każdym wierszu
@@ -321,6 +324,14 @@ export default function App(): JSX.Element {
           onSearch={setSearch}
         />
       )}
+      <aside className="sidebar sidebar-right">
+        <ContactsScreen
+          canCompose={accounts.length > 0}
+          onCompose={composeTo}
+          onHistory={showCorrespondence}
+          onOpenMessage={setOpenId}
+        />
+      </aside>
       {composeOpen && (
         <Compose
           accounts={accounts}

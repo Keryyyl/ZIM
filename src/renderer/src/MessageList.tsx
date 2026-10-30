@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { ComposeButton, SettingsButton } from './HeaderButtons'
 import SidebarToggle from './SidebarToggle'
 import type { Account, MailboxView, MessageRow } from '@shared/types'
 
@@ -12,16 +13,10 @@ function senderName(from: string): string {
   return from.replace(/\s*<[^>]*>.*$/, '') || from || '(brak nadawcy)'
 }
 
-const timeFmt = new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit' })
-const dayFmt = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' })
-const fullFmt = new Intl.DateTimeFormat('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })
-
+/** DD MM, np. "30 10" */
 function formatDate(ms: number): string {
   const d = new Date(ms)
-  const now = new Date()
-  if (d.toDateString() === now.toDateString()) return timeFmt.format(d)
-  if (d.getFullYear() === now.getFullYear()) return dayFmt.format(d)
-  return fullFmt.format(d)
+  return `${String(d.getDate()).padStart(2, '0')} ${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
 const EMPTY_TEXT: Record<MailboxView, string> = {
@@ -57,6 +52,10 @@ interface Props {
   onChanged: () => void
   onOpen: (id: number) => void
   /** Wpisana fraza; wyniki (messages) obejmują wszystkie foldery */
+  onCompose: () => void
+  composeDisabled: boolean
+  onOpenSettings: () => void
+  onToggleRight: () => void
   search: string
   /** Czy messages to już wyniki szukania */
   searchActive: boolean
@@ -64,7 +63,7 @@ interface Props {
 }
 
 export default function MessageList(props: Props): JSX.Element {
-  const { onToggleSidebar, title, subtitle, view, messages, accountsById, showAccount, hasAccounts, accounts, inbox, onSelectInbox, onChanged, onOpen, search, searchActive, onSearch } = props
+  const { onToggleSidebar, onCompose, composeDisabled, onOpenSettings, onToggleRight, title, subtitle, view, messages, accountsById, showAccount, hasAccounts, accounts, inbox, onSelectInbox, onChanged, onOpen, search, searchActive, onSearch } = props
   const [selection, setSelection] = useState<Set<number>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -166,6 +165,7 @@ export default function MessageList(props: Props): JSX.Element {
           <h2>{searchActive ? 'Wyniki wyszukiwania' : title}</h2>
           {hasAccounts && messages.length > 0 && <span className="count">{messages.length}</span>}
           {subtitle && !searchActive && <span className="muted">{subtitle}</span>}
+          <ComposeButton onCompose={onCompose} disabled={composeDisabled} />
           {searchOpen ? (
             <div className="search">
               <input
@@ -203,6 +203,8 @@ export default function MessageList(props: Props): JSX.Element {
               </svg>
             </button>
           )}
+          <SettingsButton onOpen={onOpenSettings} />
+          <SidebarToggle onToggle={onToggleRight} side="right" />
         </div>
         {accounts.length > 1 && (
           <div className="tabs" role="tablist">

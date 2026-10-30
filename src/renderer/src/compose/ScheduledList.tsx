@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import SidebarToggle from '../SidebarToggle'
+import { ComposeButton, SettingsButton } from '../HeaderButtons'
 import type { Account, ScheduledMail } from '@shared/types'
 
 const whenFmt = new Intl.DateTimeFormat('pl-PL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
 interface Props {
   onToggleSidebar: () => void
+  onCompose: () => void
+  composeDisabled: boolean
+  onOpenSettings: () => void
+  onToggleRight: () => void
   title: string
   accountId: number | null
   accountsById: Map<number, Account>
@@ -13,7 +18,7 @@ interface Props {
 }
 
 /** Wiadomości z "Wyślij o", które jeszcze nie wyszły (albo nie udało się ich wysłać). */
-export default function ScheduledList({ onToggleSidebar, title, accountId, accountsById, showAccount }: Props): JSX.Element {
+export default function ScheduledList({ onToggleSidebar, onCompose, composeDisabled, onOpenSettings, onToggleRight, title, accountId, accountsById, showAccount }: Props): JSX.Element {
   const [items, setItems] = useState<ScheduledMail[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -43,6 +48,9 @@ export default function ScheduledList({ onToggleSidebar, title, accountId, accou
         <div className="list-title">
           <SidebarToggle onToggle={onToggleSidebar} />
           <h2>{title}</h2>
+          <ComposeButton onCompose={onCompose} disabled={composeDisabled} />
+          <SettingsButton onOpen={onOpenSettings} />
+          <SidebarToggle onToggle={onToggleRight} side="right" />
         </div>
         <div className="toolbar">
           {error ? (
