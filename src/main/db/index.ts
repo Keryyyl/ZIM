@@ -183,6 +183,10 @@ function migrate(db: Database.Database): void {
   if (!msgColumns.includes('attachments_checked')) {
     db.exec('ALTER TABLE messages ADD COLUMN attachments_checked INTEGER NOT NULL DEFAULT 0')
   }
+  // wiadomości sprzed indeksu pełnotekstowego nie mają wpisów w FTS: zbuduj go od nowa
+  const indexed = (db.prepare('SELECT count(*) AS n FROM messages_fts_docsize').get() as { n: number }).n
+  const total = (db.prepare('SELECT count(*) AS n FROM messages').get() as { n: number }).n
+  if (indexed !== total) db.exec("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
   // indeksy na kolumnach z migracji, więc dopiero po ALTER TABLE
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_location ON messages(account_id, mailbox, server_uid);

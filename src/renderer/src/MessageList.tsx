@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import SidebarToggle from './SidebarToggle'
 import type { Account, MailboxView, MessageRow } from '@shared/types'
 
 /** Nazwa skrzynki w UI: alias, a gdy go brak, adres e-mail */
@@ -37,6 +38,9 @@ function wiadomosci(n: number): string {
 }
 
 interface Props {
+  onToggleSidebar: () => void
+  /** Komunikat pustej listy zamiast domyślnego dla folderu (np. widok tagu) */
+  emptyText?: string
   title: string
   subtitle: string | null
   view: MailboxView
@@ -45,19 +49,30 @@ interface Props {
   /** W "Wszystko" przy każdym mailu pokazujemy, z którego konta jest */
   showAccount: boolean
   hasAccounts: boolean
+  accounts: Account[]
+  /** null = "Wszystko" */
+  inbox: number | null
+  onSelectInbox: (id: number | null) => void
   /** Po każdej akcji lista jest pobierana od nowa */
   onChanged: () => void
   onOpen: (id: number) => void
+  /** Wpisana fraza; wyniki (messages) obejmują wszystkie foldery */
+  search: string
+  /** Czy messages to już wyniki szukania */
+  searchActive: boolean
+  onSearch: (text: string) => void
 }
 
 export default function MessageList(props: Props): JSX.Element {
-  const { title, subtitle, view, messages, accountsById, showAccount, hasAccounts, onChanged, onOpen } = props
+  const { onToggleSidebar, title, subtitle, view, messages, accountsById, showAccount, hasAccounts, accounts, inbox, onSelectInbox, onChanged, onOpen, search, searchActive, onSearch } = props
   const [selection, setSelection] = useState<Set<number>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   // ostatnio kliknięty checkbox, od niego liczy się zakres przy Shift+klik
   const anchor = useRef<number | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [searchOpen, setSearchOpen] = useState(search !== '')
 
   // po synchronizacji lub akcji część zaznaczonych wiadomości mogła zniknąć z listy
   const visibleIds = new Set(messages.map((m) => m.id))
@@ -142,28 +157,85 @@ export default function MessageList(props: Props): JSX.Element {
     return run(() => window.api.deleteForever(selectedIds), `Usunięto na zawsze: ${count}`)
   }
 
-  const toggleStar = (m: MessageRow): Promise<void> => run(() => window.api.starMessages([m.id], !m.starred))
 
   return (
-    <main className="list">
+    <main className={`list ${n > 0 ? 'selecting' : ''}`}>
       <header className="list-header">
         <div className="list-title">
-          <h2>{title}</h2>
-          {subtitle && <span className="muted">{subtitle}</span>}
+          <SidebarToggle onToggle={onToggleSidebar} />
+          <h2>{searchActive ? 'Wyniki wyszukiwania' : title}</h2>
+          {hasAccounts && messages.length > 0 && <span className="count">{messages.length}</span>}
+          {subtitle && !searchActive && <span className="muted">{subtitle}</span>}
+          {searchOpen ? (
+            <div className="search">
+              <input
+                ref={searchRef}
+                autoFocus
+                type="search"
+                value={search}
+                placeholder="Szukaj w temacie, nadawcy i treści…"
+                onChange={(e) => onSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Escape') return
+                  e.stopPropagation()
+                  onSearch('')
+                  setSearchOpen(false)
+                }}
+                aria-label="Szukaj wiadomości"
+              />
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  onSearch('')
+                  setSearchOpen(false)
+                }}
+                aria-label="Zamknij wyszukiwanie"
+                title="Zamknij (Esc)"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button className="icon-btn search-btn" onClick={() => setSearchOpen(true)} aria-label="Szukaj" title="Szukaj">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+            </button>
+          )}
         </div>
+        {accounts.length > 1 && (
+          <div className="tabs" role="tablist">
+            <button role="tab" aria-selected={inbox === null} className={inbox === null ? 'active' : ''} onClick={() => onSelectInbox(null)}>
+              Wszystko
+            </button>
+            {accounts.map((a) => (
+              <button
+                key={a.id}
+                role="tab"
+                aria-selected={inbox === a.id}
+                className={inbox === a.id ? 'active' : ''}
+                onClick={() => onSelectInbox(a.id)}
+                title={a.email}
+              >
+                {accountLabel(a)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="toolbar">
-          <input
-            ref={selectAllRef}
-            type="checkbox"
-            className="check"
-            checked={allSelected}
-            disabled={messages.length === 0}
-            onChange={toggleAll}
-            aria-label={allSelected ? 'Odznacz wszystkie' : 'Zaznacz wszystkie'}
-            title={allSelected ? 'Odznacz wszystkie' : 'Zaznacz wszystkie'}
-          />
           {n > 0 ? (
             <>
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                className="check"
+                checked={allSelected}
+                disabled={messages.length === 0}
+                onChange={toggleAll}
+                aria-label={allSelected ? 'Odznacz wszystkie' : 'Zaznacz wszystkie'}
+                title={allSelected ? 'Odznacz wszystkie' : 'Zaznacz wszystkie'}
+              />
               <span className="selected-count">Zaznaczono: {n}</span>
               <div className="actions">
                 <button className="btn" disabled={busy} onClick={toggleRead}>
@@ -219,7 +291,7 @@ export default function MessageList(props: Props): JSX.Element {
       {!hasAccounts ? (
         <p className="empty">Brak wiadomości. Dodaj konto w ustawieniach (ikona zębatki w lewym dolnym rogu).</p>
       ) : messages.length === 0 ? (
-        <p className="empty">{EMPTY_TEXT[view]}</p>
+        <p className="empty">{searchActive ? `Nic nie znaleziono dla „${search.trim()}”.` : props.emptyText ?? EMPTY_TEXT[view]}</p>
       ) : (
         messages.map((m, i) => {
           const account = accountsById.get(m.accountId)
@@ -243,18 +315,11 @@ export default function MessageList(props: Props): JSX.Element {
                 onChange={() => undefined /* obsługa w onClick, bo potrzebny jest shiftKey */}
                 aria-label={`Zaznacz: ${m.subject || '(bez tematu)'}`}
               />
-              <button
-                className={`star ${m.starred ? 'on' : ''}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  void toggleStar(m)
-                }}
-                disabled={busy || view === 'spam' || view === 'trash'}
-                aria-label={m.starred ? 'Usuń gwiazdkę' : 'Oznacz gwiazdką'}
-                title={m.starred ? 'Usuń gwiazdkę' : 'Oznacz gwiazdką'}
-              >
-                {m.starred ? '★' : '☆'}
-              </button>
+              <span
+                className="row-tag-dot"
+                style={m.tags[0]?.color ? ({ '--tag': m.tags[0].color } as React.CSSProperties) : undefined}
+                title={m.tags[0]?.name}
+              />
               <span className="from" title={m.from}>
                 {senderName(m.from)}
               </span>

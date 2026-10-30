@@ -27,13 +27,24 @@ const BASE_STYLE = `
   blockquote { margin: 0 0 0 8px; padding-left: 12px; border-left: 3px solid #ddd; color: #555; }
 `
 
+/**
+ * Ciemny motyw: maile mają własne kolory (często jawnie białe tła), więc zamiast je podmieniać
+ * odwracamy całą stronę, a obrazki odwracamy z powrotem. Tło #f4f3f1 po odwróceniu daje kolor
+ * tła aplikacji (#0b0c0e), a tekst #1a1a1a biały.
+ */
+const DARK_STYLE = `
+  html { background: #f4f3f1; filter: invert(1) hue-rotate(180deg); }
+  img, video, svg image { filter: invert(1) hue-rotate(180deg); }
+  blockquote { border-left-color: #bbb; color: #666; }
+`
+
 export interface SanitizedEmail {
   /** Pełny dokument do srcdoc */
   document: string
   blockedImages: number
 }
 
-export function sanitizeEmailHtml(html: string): SanitizedEmail {
+export function sanitizeEmailHtml(html: string, dark = false): SanitizedEmail {
   let blockedImages = 0
 
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
@@ -95,7 +106,7 @@ export function sanitizeEmailHtml(html: string): SanitizedEmail {
   const base = doc.createElement('base')
   base.setAttribute('target', '_blank')
   const style = doc.createElement('style')
-  style.textContent = BASE_STYLE
+  style.textContent = dark ? BASE_STYLE + DARK_STYLE : BASE_STYLE
   // CSP pierwsze, żeby obowiązywało zanim przeglądarka zobaczy cokolwiek z maila
   head.prepend(csp, charset, base, style)
 

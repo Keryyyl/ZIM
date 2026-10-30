@@ -33,13 +33,15 @@ interface Props {
   onClose: () => void
   /** Po wysłaniu/zaplanowaniu: komunikat do pokazania w aplikacji */
   onDone: (message: string) => void
+  /** Odpowiedź: gotowy nadawca, adresat i temat */
+  initial?: { accountId: number; to: string; subject: string }
 }
 
-export default function Compose({ accounts, defaultAccountId, onClose, onDone }: Props): JSX.Element {
-  const [accountId, setAccountId] = useState<number>(defaultAccountId ?? accounts[0]?.id ?? -1)
-  const [to, setTo] = useState<string[]>([])
+export default function Compose({ accounts, defaultAccountId, onClose, onDone, initial }: Props): JSX.Element {
+  const [accountId, setAccountId] = useState<number>(initial?.accountId ?? defaultAccountId ?? accounts[0]?.id ?? -1)
+  const [to, setTo] = useState<string[]>(initial ? [initial.to] : [])
   const [toText, setToText] = useState('')
-  const [subject, setSubject] = useState('')
+  const [subject, setSubject] = useState(initial?.subject ?? '')
   const [text, setText] = useState('')
   const [files, setFiles] = useState<PickedFile[]>([])
   const [busy, setBusy] = useState<false | 'send' | 'schedule' | 'files'>(false)

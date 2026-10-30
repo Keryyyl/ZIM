@@ -37,6 +37,8 @@ export type MailboxView = Folder | 'starred'
 export interface MessageQuery {
   accountId: number | null // null = wszystkie konta
   view: MailboxView
+  /** Tylko wiadomości z tym tagiem (z odebranych i archiwum), niezależnie od `view` */
+  tagId?: number | null
 }
 
 /** Wiersz listy wiadomości (bez treści) */
@@ -53,6 +55,8 @@ export interface MessageRow {
   priority: Priority
   /** Ma załączniki inne niż obrazki osadzone w treści (ikona spinacza) */
   hasAttachments: boolean
+  /** Tagi nadane wiadomości (lokalne, nie trafiają na serwer) */
+  tags: Tag[]
 }
 
 /** Załącznik odebranej wiadomości; sama treść jest na serwerze, dopóki jej nie pobierzemy */

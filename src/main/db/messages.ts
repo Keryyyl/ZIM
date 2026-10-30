@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { Folder, MailboxView, MessageDetail, MessageQuery, MessageRow } from '@shared/types'
 import { listAttachments } from './attachments'
+import { tagsByMessage } from './tags'
 
 const FOLDERS: readonly Folder[] = ['inbox', 'archive', 'spam', 'trash']
 const VIEWS: readonly MailboxView[] = [...FOLDERS, 'starred']
@@ -24,10 +25,35 @@ function inChunks(ids: number[], fn: (chunk: number[], placeholders: string) => 
   }
 }
 
+type RawRow = Omit<MessageRow, 'read' | 'starred' | 'hasAttachments' | 'tags'> & {
+  read: number
+  starred: number
+  hasAttachments: number
+}
+
+function withTags(db: Database.Database, rows: RawRow[]): MessageRow[] {
+  const tags = tagsByMessage(
+    db,
+    rows.map((r) => r.id)
+  )
+  return rows.map((r) => ({
+    ...r,
+    read: r.read === 1,
+    starred: r.starred === 1,
+    hasAttachments: r.hasAttachments === 1,
+    tags: tags.get(r.id) ?? []
+  }))
+}
+
 export function listMessages(db: Database.Database, query: MessageQuery): MessageRow[] {
   const view: MailboxView = VIEWS.includes(query.view) ? query.view : 'inbox'
+  const tagId = Number.isInteger(query.tagId) ? query.tagId : null
   const where =
-    view === 'starred' ? "starred = 1 AND folder IN ('inbox', 'archive')" : 'folder = @view'
+    tagId !== null
+      ? "folder IN ('inbox', 'archive') AND EXISTS (SELECT 1 FROM message_tags mt WHERE mt.message_id = messages.id AND mt.tag_id = @tagId)"
+      : view === 'starred'
+        ? "starred = 1 AND folder IN ('inbox', 'archive')"
+        : 'folder = @view'
   const rows = db
     .prepare(
       `SELECT id, account_id AS accountId, from_addr AS "from", subject, date, snippet,
@@ -37,17 +63,36 @@ export function listMessages(db: Database.Database, query: MessageQuery): Messag
        WHERE ${where} AND (@accountId IS NULL OR account_id = @accountId)
        ORDER BY date DESC LIMIT ${LIMIT}`
     )
-    .all({ view, accountId: query.accountId ?? null }) as (Omit<MessageRow, 'read' | 'starred' | 'hasAttachments'> & {
-    read: number
-    starred: number
-    hasAttachments: number
-  })[]
-  return rows.map((r) => ({
-    ...r,
-    read: r.read === 1,
-    starred: r.starred === 1,
-    hasAttachments: r.hasAttachments === 1
-  }))
+    .all({ view, tagId, accountId: query.accountId ?? null }) as RawRow[]
+  return withTags(db, rows)
+}
+
+/** Zapytanie użytkownika -> FTS5: każde słowo jako prefiks, wszystkie muszą wystąpić ("fakt" znajdzie "faktura"). */
+export function toFtsQuery(text: string): string | null {
+  const words = text
+    .split(/\s+/)
+    .map((w) => w.replace(/"/g, ''))
+    .filter(Boolean)
+    .slice(0, 10)
+  return words.length === 0 ? null : words.map((w) => `"${w}"*`).join(' ')
+}
+
+/** Szukanie w temacie, nadawcy i treści, we wszystkich folderach (poza trwale usuniętymi). */
+export function searchMessages(db: Database.Database, query: { accountId: number | null; text: string }): MessageRow[] {
+  const match = toFtsQuery(String(query.text ?? ''))
+  if (!match) return []
+  const rows = db
+    .prepare(
+      `SELECT id, account_id AS accountId, from_addr AS "from", subject, date, snippet,
+              read, starred, folder, priority,
+              EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = messages.id AND a.inline = 0) AS hasAttachments
+       FROM messages
+       WHERE id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH @match)
+         AND folder != 'deleted' AND (@accountId IS NULL OR account_id = @accountId)
+       ORDER BY date DESC LIMIT ${LIMIT}`
+    )
+    .all({ match, accountId: query.accountId ?? null }) as RawRow[]
+  return withTags(db, rows)
 }
 
 export function getMessage(db: Database.Database, id: number): MessageDetail | null {
@@ -58,7 +103,10 @@ export function getMessage(db: Database.Database, id: number): MessageDetail | n
        FROM messages WHERE id = ? AND folder != 'deleted'`
     )
     .get(id) as
-    | (Omit<MessageDetail, 'read' | 'starred' | 'hasAttachments' | 'attachments'> & { read: number; starred: number })
+    | (Omit<MessageDetail, 'read' | 'starred' | 'hasAttachments' | 'attachments' | 'tags'> & {
+        read: number
+        starred: number
+      })
     | undefined
   if (!row) return null
   const attachments = listAttachments(db, id)
@@ -67,6 +115,7 @@ export function getMessage(db: Database.Database, id: number): MessageDetail | n
     read: row.read === 1,
     starred: row.starred === 1,
     attachments,
+    tags: tagsByMessage(db, [id]).get(id) ?? [],
     hasAttachments: attachments.some((a) => !a.inline)
   }
 }

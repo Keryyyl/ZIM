@@ -1,22 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { Account, MailboxView, MessageRow, SyncStatus } from '@shared/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Account, MailboxView, MessageRow, SyncStatus, Tag } from '@shared/types'
 import MessageList, { accountLabel } from './MessageList'
 import Reader from './reader/Reader'
 import Compose from './compose/Compose'
 import ScheduledList from './compose/ScheduledList'
 import Settings from './settings/Settings'
 import { useTheme } from './settings/theme'
+import { useShortcuts } from './settings/shortcuts'
+import { FOLDERS, useHiddenFolders } from './settings/folders'
+import { useSidebarCollapsed } from './settings/sidebar'
 
 type View = MailboxView | 'scheduled'
 
-const VIEWS: { id: View; label: string }[] = [
-  { id: 'inbox', label: 'Odebrane' },
-  { id: 'starred', label: 'Oznaczone gwiazdką' },
-  { id: 'archive', label: 'Archiwum' },
-  { id: 'spam', label: 'Spam' },
-  { id: 'trash', label: 'Kosz' },
-  { id: 'scheduled', label: 'Zaplanowane' }
-]
+const VIEWS = FOLDERS satisfies { id: View; label: string }[]
 
 function SyncIndicator({ statuses }: { statuses: SyncStatus[] }): JSX.Element | null {
   const active = statuses.filter((s) => s.state === 'syncing')
@@ -45,16 +41,26 @@ export default function App(): JSX.Element {
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [theme, setTheme] = useTheme()
+  const [hiddenFolders, setFolderHidden] = useHiddenFolders()
+  const [shortcuts, setShortcut] = useShortcuts()
+  const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
   const [sync, setSync] = useState<Record<number, SyncStatus>>({})
   const [accounts, setAccounts] = useState<Account[]>([])
   // null = "Wszystko" (zunifikowana skrzynka), liczba = id konta
   const [inbox, setInbox] = useState<number | null>(null)
   const [view, setView] = useState<View>('inbox')
+  // lista tagów w sidebarze; wybrany tag filtruje wiadomości z odebranych i archiwum
+  const [tags, setTags] = useState<Tag[]>([])
+  const [tagFilter, setTagFilter] = useState<number | null>(null)
   // zwiększane po akcji na wiadomościach, żeby pobrać listę od nowa
   const [version, setVersion] = useState(0)
   // wiadomość otwarta w czytniku
   const [openId, setOpenId] = useState<number | null>(null)
+  // fraza wpisana w polu szukania i jej opóźniona wersja, po której faktycznie szukamy
+  const [search, setSearch] = useState('')
+  const [query, setQuery] = useState('')
   const [composeOpen, setComposeOpen] = useState(false)
+  const [replyTo, setReplyTo] = useState<{ accountId: number; to: string; subject: string } | undefined>()
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
@@ -74,11 +80,27 @@ export default function App(): JSX.Element {
   useEffect(refreshAccounts, [])
 
   useEffect(() => {
+    void window.api.listTags().then((list) => {
+      setTags(list)
+      // wybrany tag mógł zostać usunięty w ustawieniach
+      setTagFilter((cur) => (cur !== null && !list.some((t) => t.id === cur) ? null : cur))
+    })
+  }, [version])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 200)
+    return () => clearTimeout(timer)
+  }, [search])
+
+  useEffect(() => {
     // po przełączeniu skrzynki spóźniona odpowiedź z poprzedniej nie może nadpisać listy
     let current = true
     const refresh = (): void => {
       if (view === 'scheduled') return
-      void window.api.listMessages({ accountId: inbox, view }).then((rows) => current && setMessages(rows))
+      const request = query
+        ? window.api.searchMessages({ accountId: inbox, text: query })
+        : window.api.listMessages({ accountId: inbox, view, tagId: tagFilter })
+      void request.then((rows) => current && setMessages(rows))
     }
     refresh()
     const unsubscribe = window.api.onSyncStatus((status) => {
@@ -89,60 +111,166 @@ export default function App(): JSX.Element {
       current = false
       unsubscribe()
     }
-  }, [inbox, view, accounts, version])
+  }, [inbox, view, tagFilter, accounts, version, query])
+
+  // ukryty folder dalej istnieje w tle; jeśli właśnie go oglądamy, wracamy do odebranych
+  useEffect(() => {
+    if (hiddenFolders.has(view)) setView('inbox')
+  }, [hiddenFolders, view])
+
+  // skróty działają w czytniku; wyłączone w polach tekstowych, przy pisaniu i w ustawieniach
+  const keyState = { openId, messages, view: tagFilter !== null ? ('starred' as const) : view, shortcuts, blocked: composeOpen || settingsOpen }
+  const keyRef = useRef(keyState)
+  keyRef.current = keyState
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const { openId, messages, view, shortcuts, blocked } = keyRef.current
+      if (openId === null || blocked || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return
+      const index = messages.findIndex((m) => m.id === openId)
+      if (index < 0) return
+      const next = messages[index + 1]?.id
+      const prev = messages[index - 1]?.id
+      if (e.key === shortcuts.next) {
+        if (next !== undefined) setOpenId(next)
+      } else if (e.key === shortcuts.prev) {
+        if (prev !== undefined) setOpenId(prev)
+      } else if (e.key === shortcuts.archive) {
+        if (view !== 'inbox' && view !== 'starred') return
+        void window.api.moveMessages([openId], 'archive').then(() => {
+          setOpenId(next ?? prev ?? null)
+          setVersion((v) => v + 1)
+          setToast('Zarchiwizowano')
+        })
+      } else if (e.key === shortcuts.reply) {
+        void window.api.getMessage(openId).then((m) => {
+          if (!m) return
+          const to = /<([^>]+)>/.exec(m.from)?.[1] ?? m.from
+          const subject = /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`
+          setReplyTo({ accountId: m.accountId, to, subject })
+          setOpenId(null)
+          setComposeOpen(true)
+        })
+      } else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // C = nowa wiadomość, G i litera = przejście do folderu (nie w czytniku, tam działają skróty wiadomości)
+  const navRef = useRef({ blocked: false, hidden: hiddenFolders, accounts: accounts.length, reader: false })
+  navRef.current = { blocked: composeOpen || settingsOpen, hidden: hiddenFolders, accounts: accounts.length, reader: openId !== null }
+
+  useEffect(() => {
+    let gAt = 0
+    const onKey = (e: KeyboardEvent): void => {
+      const nav = navRef.current
+      if (nav.blocked || nav.reader || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return
+      const key = e.key.toLowerCase()
+      if (Date.now() - gAt < 1500) {
+        gAt = 0
+        const folder = FOLDERS.find((f) => f.key === key)
+        if (!folder || nav.hidden.has(folder.id)) return
+        setView(folder.id)
+        setTagFilter(null)
+        setSearch('')
+      } else if (key === 'g') {
+        gAt = Date.now()
+      } else if (key === 'c' && nav.accounts > 0) {
+        setReplyTo(undefined)
+        setComposeOpen(true)
+      } else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Cmd/Ctrl+B chowa i przywraca pasek boczny (działa też w polu szukania)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'b') return
+      if (navRef.current.blocked) return
+      e.preventDefault()
+      toggleSidebar()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const closeReader = useCallback(() => setOpenId(null), [])
   const accountsById = new Map(accounts.map((a) => [a.id, a]))
   const selected = inbox === null ? null : accountsById.get(inbox)
-  const viewLabel = VIEWS.find((v) => v.id === view)!.label
+  const filterTag = tags.find((t) => t.id === tagFilter)
+  const viewLabel = filterTag ? filterTag.name : VIEWS.find((v) => v.id === view)!.label
 
   return (
-    <div className="app">
+    <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <div className="titlebar-drag" />
       <aside className="sidebar">
         <h1>ZIM</h1>
         <button
           className="compose-btn"
-          onClick={() => setComposeOpen(true)}
+          onClick={() => {
+            setReplyTo(undefined)
+            setComposeOpen(true)
+          }}
           disabled={accounts.length === 0}
           aria-label="Nowa wiadomość"
           title={accounts.length === 0 ? 'Najpierw dodaj konto w ustawieniach' : 'Nowa wiadomość'}
         >
-          +
+          <span className="compose-plus">+</span>
+          <span className="compose-label">Napisz</span>
+          <kbd className="hint">
+            <span />
+            <span>C</span>
+          </kbd>
         </button>
         <nav>
-          <div className="nav-label">Skrzynki</div>
-          <button className={`view ${inbox === null ? 'active' : ''}`} onClick={() => setInbox(null)}>
-            Wszystko
-          </button>
-          {accounts.map((a) => (
-            <button
-              key={a.id}
-              className={`view ${inbox === a.id ? 'active' : ''}`}
-              onClick={() => setInbox(a.id)}
-              title={a.email}
-            >
-              {accountLabel(a)}
-            </button>
-          ))}
-        </nav>
-        <nav>
-          <div className="nav-label">Foldery</div>
-          {VIEWS.map((v) => (
+          {VIEWS.filter((v) => !hiddenFolders.has(v.id)).map((v) => (
             <button
               key={v.id}
-              className={`view ${view === v.id ? 'active' : ''}`}
-              onClick={() => setView(v.id)}
+              className={`view ${view === v.id && tagFilter === null ? 'active' : ''}`}
+              onClick={() => {
+                setView(v.id)
+                setTagFilter(null)
+                setSearch('')
+              }}
             >
-              {v.label}
+              <span className="view-label">{v.label}</span>
+              <kbd className="hint">
+                <span>G</span>
+                <span>{v.key.toUpperCase()}</span>
+              </kbd>
             </button>
           ))}
         </nav>
-        <nav>
-          <div className="nav-label">Widoki</div>
-          <div className="view">Główna</div>
-          <div className="view">Rekrutacje</div>
-          <div className="view">Newslettery</div>
-        </nav>
+        {tags.length > 0 && (
+          <nav aria-label="Tagi">
+            <div className="nav-label">Tagi</div>
+            {tags.map((t) => (
+              <button
+                key={t.id}
+                className={`view ${tagFilter === t.id ? 'active' : ''}`}
+                onClick={() => {
+                  setView('inbox')
+                  setTagFilter(t.id)
+                  setSearch('')
+                }}
+              >
+                <span className="view-tag" style={t.color ? ({ '--tag': t.color } as React.CSSProperties) : undefined}>
+                  <span className="tag-dot" />
+                  <span className="view-label">{t.name}</span>
+                </span>
+              </button>
+            ))}
+          </nav>
+        )}
         <div className="sidebar-footer">
           <SyncIndicator statuses={Object.values(sync)} />
           <button
@@ -161,6 +289,7 @@ export default function App(): JSX.Element {
       </aside>
       {view === 'scheduled' ? (
         <ScheduledList
+          onToggleSidebar={toggleSidebar}
           key={`${inbox ?? 'all'}:scheduled`}
           title={`${selected ? accountLabel(selected) : 'Wszystko'} · ${viewLabel}`}
           accountId={inbox}
@@ -169,24 +298,34 @@ export default function App(): JSX.Element {
         />
       ) : (
         <MessageList
+          onToggleSidebar={toggleSidebar}
           // nowa skrzynka/folder = świeże zaznaczenie
-          key={`${inbox ?? 'all'}:${view}`}
-          title={`${selected ? accountLabel(selected) : 'Wszystko'} · ${viewLabel}`}
+          key={`${inbox ?? 'all'}:${view}:${tagFilter}`}
+          title={viewLabel}
           subtitle={selected?.alias ? selected.email : null}
-          view={view}
+          // widok tagu miesza odebrane i archiwum, tak jak gwiazdki, więc ma te same akcje
+          view={tagFilter !== null ? 'starred' : view}
+          emptyText={filterTag ? 'Żadna wiadomość nie ma tego tagu.' : undefined}
           messages={messages}
           accountsById={accountsById}
           // w pojedynczej skrzynce etykieta konta byłaby taka sama w każdym wierszu
           showAccount={inbox === null}
           hasAccounts={accounts.length > 0}
+          accounts={accounts}
+          inbox={inbox}
+          onSelectInbox={setInbox}
           onChanged={() => setVersion((v) => v + 1)}
           onOpen={setOpenId}
+          search={search}
+          searchActive={query !== ''}
+          onSearch={setSearch}
         />
       )}
       {composeOpen && (
         <Compose
           accounts={accounts}
           defaultAccountId={inbox}
+          initial={replyTo}
           onClose={() => setComposeOpen(false)}
           onDone={setToast}
         />
@@ -208,7 +347,12 @@ export default function App(): JSX.Element {
         <Settings
           theme={theme}
           onThemeChange={setTheme}
+          shortcuts={shortcuts}
+          onShortcutChange={setShortcut}
+          hiddenFolders={hiddenFolders}
+          onFolderHiddenChange={setFolderHidden}
           onAccountsChange={refreshAccounts}
+          onTagsChange={() => setVersion((v) => v + 1)}
           onClose={() => setSettingsOpen(false)}
         />
       )}

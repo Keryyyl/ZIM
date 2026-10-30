@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import SidebarToggle from '../SidebarToggle'
 import type { Account, ScheduledMail } from '@shared/types'
 
 const whenFmt = new Intl.DateTimeFormat('pl-PL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
 interface Props {
+  onToggleSidebar: () => void
   title: string
   accountId: number | null
   accountsById: Map<number, Account>
@@ -11,7 +13,7 @@ interface Props {
 }
 
 /** Wiadomości z "Wyślij o", które jeszcze nie wyszły (albo nie udało się ich wysłać). */
-export default function ScheduledList({ title, accountId, accountsById, showAccount }: Props): JSX.Element {
+export default function ScheduledList({ onToggleSidebar, title, accountId, accountsById, showAccount }: Props): JSX.Element {
   const [items, setItems] = useState<ScheduledMail[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -39,6 +41,7 @@ export default function ScheduledList({ title, accountId, accountsById, showAcco
     <main className="list">
       <header className="list-header">
         <div className="list-title">
+          <SidebarToggle onToggle={onToggleSidebar} />
           <h2>{title}</h2>
         </div>
         <div className="toolbar">

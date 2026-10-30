@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Account, MessageDetail } from '@shared/types'
+import type { Account, MessageDetail, Tag } from '@shared/types'
+import TagChip from '../TagChip'
 import Attachments from './Attachments'
 import { sanitizeEmailHtml } from './sanitize'
 
@@ -23,6 +24,8 @@ interface Props {
 export default function Reader({ id, accountsById, onClose, onChanged }: Props): JSX.Element {
   const [message, setMessage] = useState<MessageDetail | null | undefined>(undefined)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const [allTags, setAllTags] = useState<Tag[]>([])
+  const [picking, setPicking] = useState(false)
 
   useEffect(() => {
     let current = true
@@ -38,15 +41,34 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
   }, [id])
 
   useEffect(() => {
+    void window.api.listTags().then(setAllTags)
+  }, [])
+
+  const toggleTag = async (tag: Tag, on: boolean): Promise<void> => {
+    if (!message) return
+    await window.api.tagMessages([message.id], tag.id, on)
+    const tags = on
+      ? [...message.tags, tag].sort((a, b) => a.name.localeCompare(b.name, 'pl'))
+      : message.tags.filter((t) => t.id !== tag.id)
+    setMessage({ ...message, tags })
+    onChanged()
+  }
+
+  useEffect(() => {
     closeRef.current?.focus()
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      // pierwszy Esc zamyka listę tagów, dopiero drugi czytnik
+      if (picking) setPicking(false)
+      else onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, picking])
 
-  const html = useMemo(() => (message?.bodyHtml ? sanitizeEmailHtml(message.bodyHtml) : null), [message])
+  // color-scheme na <html> ustawia motyw aplikacji (ręczny wybór albo systemowy)
+  const dark = getComputedStyle(document.documentElement).colorScheme === 'dark'
+  const html = useMemo(() => (message?.bodyHtml ? sanitizeEmailHtml(message.bodyHtml, dark) : null), [message, dark])
   const from = message ? splitAddress(message.from) : null
   const account = message ? accountsById.get(message.accountId) : undefined
 
@@ -82,6 +104,41 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
                   )}
                 </dd>
               </dl>
+              <div className="reader-tags">
+                {message.tags.map((t) => (
+                  <TagChip key={t.id} tag={t} onRemove={() => void toggleTag(t, false)} />
+                ))}
+                <span className="tag-add">
+                  <button className="btn" onClick={() => setPicking((p) => !p)} aria-expanded={picking}>
+                    + Tag
+                  </button>
+                  {picking && (
+                    <div className="tag-menu" role="menu">
+                      {allTags.length === 0 ? (
+                        <p className="muted">Brak tagów. Utwórz je w Ustawieniach → Tagi.</p>
+                      ) : (
+                        allTags
+                          .filter((t) => !message.tags.some((m) => m.id === t.id))
+                          .map((t) => (
+                            <button
+                              key={t.id}
+                              role="menuitem"
+                              onClick={() => {
+                                setPicking(false)
+                                void toggleTag(t, true)
+                              }}
+                            >
+                              <TagChip tag={t} />
+                            </button>
+                          ))
+                      )}
+                      {allTags.length > 0 && allTags.every((t) => message.tags.some((m) => m.id === t.id)) && (
+                        <p className="muted">Wszystkie tagi są już dodane.</p>
+                      )}
+                    </div>
+                  )}
+                </span>
+              </div>
               {html && html.blockedImages > 0 && (
                 <p className="reader-notice">
                   Zablokowano zdalne obrazki ({html.blockedImages}), żeby nadawca nie wiedział, że otworzono wiadomość.

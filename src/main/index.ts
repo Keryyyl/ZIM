@@ -27,8 +27,10 @@ import {
   moveToFolder,
   sanitizeIds,
   setRead,
+  searchMessages,
   setStarred
 } from './db/messages'
+import { createTag, deleteTag, listTags, setMessageTag, updateTag } from './db/tags'
 import { syncAccount } from './mail/sync'
 import { createSecretStore } from './secrets'
 import type { Account, Folder, MessageQuery, OutgoingDraft, PickedFile, SyncStatus } from '@shared/types'
@@ -187,6 +189,11 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    // macOS: bez paska tytułowego, przyciski okna wtapiają się w pasek boczny (przeciąganie: .titlebar-drag)
+    ...(process.platform === 'darwin' && {
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 16, y: 16 }
+    }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -217,6 +224,9 @@ app.whenReady().then(() => {
 
   // accountId === null: zunifikowana skrzynka "Wszystko"
   ipcMain.handle('messages:list', (_e, query: MessageQuery) => listMessages(db, query))
+  ipcMain.handle('messages:search', (_e, query: { accountId: number | null; text: string }) =>
+    searchMessages(db, { accountId: Number.isInteger(query?.accountId) ? query.accountId : null, text: String(query?.text ?? '') })
+  )
   ipcMain.handle('messages:get', (_e, id: unknown) => (Number.isInteger(id) ? getMessage(db, id as number) : null))
   ipcMain.handle(
     'messages:read',
@@ -233,6 +243,21 @@ app.whenReady().then(() => {
   ipcMain.handle('messages:spam', action((ids: unknown) => markSpam(db, sanitizeIds(ids))))
   ipcMain.handle('messages:notSpam', action((ids: unknown) => markNotSpam(db, sanitizeIds(ids))))
   ipcMain.handle('messages:deleteForever', action((ids: unknown) => deleteForever(db, sanitizeIds(ids))))
+
+  // tagi są tylko lokalne, więc bez action(): nie ma czego wypychać na serwer
+  ipcMain.handle('tags:list', () => listTags(db))
+  ipcMain.handle('tags:create', (_e, name: unknown, color: unknown) => createTag(db, name, color))
+  ipcMain.handle('tags:update', (_e, id: unknown, name: unknown, color: unknown) => {
+    if (!Number.isInteger(id)) throw new Error('Nieznany tag')
+    return updateTag(db, id as number, name, color)
+  })
+  ipcMain.handle('tags:delete', (_e, id: unknown) => {
+    if (Number.isInteger(id)) deleteTag(db, id as number)
+  })
+  ipcMain.handle('messages:tag', (_e, ids: unknown, tagId: unknown, on: unknown) => {
+    if (!Number.isInteger(tagId)) throw new Error('Nieznany tag')
+    setMessageTag(db, sanitizeIds(ids), tagId as number, on === true)
+  })
 
   ipcMain.handle('attachments:open', async (e, id: unknown) => {
     const attachment = attachmentById(id)

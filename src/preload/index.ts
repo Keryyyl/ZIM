@@ -8,11 +8,14 @@ import type {
   OutgoingDraft,
   PickedFile,
   ScheduledMail,
-  SyncStatus
+  SyncStatus,
+  Tag
 } from '@shared/types'
 
 const api = {
   listMessages: (query: MessageQuery): Promise<MessageRow[]> => ipcRenderer.invoke('messages:list', query),
+  searchMessages: (query: { accountId: number | null; text: string }): Promise<MessageRow[]> =>
+    ipcRenderer.invoke('messages:search', query),
   getMessage: (id: number): Promise<MessageDetail | null> => ipcRenderer.invoke('messages:get', id),
   markRead: (ids: number[], read: boolean): Promise<void> => ipcRenderer.invoke('messages:read', ids, read),
   starMessages: (ids: number[], starred: boolean): Promise<void> =>
@@ -23,6 +26,14 @@ const api = {
   markSpam: (ids: number[]): Promise<number> => ipcRenderer.invoke('messages:spam', ids),
   markNotSpam: (ids: number[]): Promise<void> => ipcRenderer.invoke('messages:notSpam', ids),
   deleteForever: (ids: number[]): Promise<void> => ipcRenderer.invoke('messages:deleteForever', ids),
+  listTags: (): Promise<Tag[]> => ipcRenderer.invoke('tags:list'),
+  createTag: (name: string, color: string | null): Promise<Tag> => ipcRenderer.invoke('tags:create', name, color),
+  updateTag: (id: number, name: string, color: string | null): Promise<Tag> =>
+    ipcRenderer.invoke('tags:update', id, name, color),
+  deleteTag: (id: number): Promise<void> => ipcRenderer.invoke('tags:delete', id),
+  /** Tylko istniejące tagi; nowe powstają wyłącznie w ustawieniach */
+  tagMessages: (ids: number[], tagId: number, on: boolean): Promise<void> =>
+    ipcRenderer.invoke('messages:tag', ids, tagId, on),
   openAttachment: (id: number): Promise<void> => ipcRenderer.invoke('attachments:open', id),
   /** false = użytkownik anulował wybór miejsca zapisu */
   saveAttachment: (id: number): Promise<boolean> => ipcRenderer.invoke('attachments:save', id),
