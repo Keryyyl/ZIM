@@ -91,6 +91,9 @@ export default function App(): JSX.Element {
     })
   }, [version])
 
+  // asystent AI tagował w tle: odśwież listę wiadomości i tagów
+  useEffect(() => window.api.onAiTagged(() => setVersion((v) => v + 1)), [])
+
   useEffect(() => {
     const timer = setTimeout(() => setQuery(search.trim()), 200)
     return () => clearTimeout(timer)
@@ -142,7 +145,7 @@ export default function App(): JSX.Element {
       } else if (e.key === shortcuts.prev) {
         if (prev !== undefined) setOpenId(prev)
       } else if (e.key === shortcuts.archive) {
-        if (view !== 'inbox' && view !== 'starred') return
+        if (view !== 'inbox' && view !== 'starred' && view !== 'all') return
         void window.api.moveMessages([openId], 'archive').then(() => {
           setOpenId(next ?? prev ?? null)
           setVersion((v) => v + 1)

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 
 /** Foldery z paska bocznego. Ukrycie tylko chowa folder w UI, wiadomości dalej są w bazie i na serwerze. */
-export type FolderId = 'inbox' | 'starred' | 'archive' | 'spam' | 'trash' | 'scheduled'
+export type FolderId = 'inbox' | 'all' | 'starred' | 'archive' | 'spam' | 'trash' | 'scheduled'
 
 export const FOLDERS: { id: FolderId; label: string; description: string; /** druga litera skrótu G + litera */ key: string; locked?: boolean }[] = [
   { id: 'inbox', key: 'i', label: 'Odebrane', description: 'Główna skrzynka', locked: true },
+  { id: 'all', key: 'w', label: 'Wszystko', description: 'Odebrane i Archiwum razem' },
   { id: 'starred', key: 'o', label: 'Oznaczone gwiazdką', description: 'Wiadomości z gwiazdką' },
   { id: 'scheduled', key: 's', label: 'Zaplanowane', description: 'Wiadomości czekające na wysłanie' },
   { id: 'archive', key: 'a', label: 'Archiwum', description: 'Zarchiwizowane wiadomości' },

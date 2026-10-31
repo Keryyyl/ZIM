@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Account, MessageDetail, Tag } from '@shared/types'
 import TagChip from '../TagChip'
 import Attachments from './Attachments'
+import Summary from './Summary'
 import { sanitizeEmailHtml } from './sanitize'
 
 const fullDateFmt = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'full', timeStyle: 'short' })
@@ -26,6 +27,8 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
   const closeRef = useRef<HTMLButtonElement>(null)
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [picking, setPicking] = useState(false)
+  const [tagging, setTagging] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
 
   useEffect(() => {
     let current = true
@@ -52,6 +55,21 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
       : message.tags.filter((t) => t.id !== tag.id)
     setMessage({ ...message, tags })
     onChanged()
+  }
+
+  const suggestTags = async (): Promise<void> => {
+    if (!message) return
+    setTagging(true)
+    setAiError(null)
+    try {
+      const updated = await window.api.reclassifyMessage(message.id)
+      if (updated) setMessage(updated)
+      onChanged()
+    } catch (err) {
+      setAiError(String(err).replace(/^.*Error: /, ''))
+    } finally {
+      setTagging(false)
+    }
   }
 
   useEffect(() => {
@@ -138,7 +156,20 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
                     </div>
                   )}
                 </span>
+                <button
+                  className="btn"
+                  onClick={() => void suggestTags()}
+                  disabled={tagging}
+                  title="Asystent AI dobierze tagi do tej wiadomości (zastąpi swoje wcześniejsze, ręcznych nie rusza)"
+                >
+                  {tagging ? 'Taguję…' : 'Tagi AI'}
+                </button>
               </div>
+              {aiError && (
+                <p className="error" role="alert">
+                  {aiError}
+                </p>
+              )}
               {html && html.blockedImages > 0 && (
                 <p className="reader-notice">
                   Zablokowano zdalne obrazki ({html.blockedImages}), żeby nadawca nie wiedział, że otworzono wiadomość.
@@ -146,6 +177,7 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
               )}
               <Attachments key={message.id} attachments={message.attachments} />
             </header>
+            <Summary key={message.id} message={message} />
             <div className="reader-body">
               {html ? (
                 <iframe

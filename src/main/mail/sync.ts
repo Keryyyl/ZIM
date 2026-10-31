@@ -156,9 +156,9 @@ async function downloadNew(
   const insert = db.prepare(
     `INSERT OR IGNORE INTO messages
        (account_id, uid, message_id, thread_id, from_addr, from_email, to_addr, subject, date,
-        snippet, body_text, body_html, read, starred, folder, mailbox, server_uid, server_seen, server_flagged)
+        snippet, body_text, body_html, bulk, read, starred, folder, mailbox, server_uid, server_seen, server_flagged)
      VALUES (@accountId, @uid, @messageId, @threadId, @from, @fromEmail, @to, @subject, @date,
-        @snippet, @bodyText, @bodyHtml, @seen, @flagged,
+        @snippet, @bodyText, @bodyHtml, @bulk, @seen, @flagged,
         -- nadawca oznaczony wcześniej jako spam; przeniesienie na serwerze zrobi pushChanges
         CASE WHEN EXISTS (SELECT 1 FROM spam_senders WHERE email = @fromEmail) THEN 'spam' ELSE 'inbox' END,
         'INBOX', @uid, @seen, @flagged)`
@@ -216,6 +216,7 @@ async function downloadNew(
         snippet: makeSnippet(bodyText),
         bodyText,
         bodyHtml: parsed.html || null,
+        bulk: parsed.headers.has('list-unsubscribe') ? 1 : 0,
         seen: msg.flags?.has('\\Seen') ? 1 : 0,
         flagged: msg.flags?.has('\\Flagged') ? 1 : 0
       })

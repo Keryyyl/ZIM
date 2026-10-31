@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import type { Account, Tag } from '@shared/types'
+import type { Account, AiState, AiStatus, Tag } from '@shared/types'
 import TagChip, { ColorPicker, TAG_COLORS } from '../TagChip'
 import { guessSmtp } from '@shared/smtp'
 import { ACCENTS, type Theme, type ThemeMode } from './theme'
@@ -7,12 +7,13 @@ import { FOLDERS, type FolderId } from './folders'
 import { RIGHT_SIDEBAR_SHORTCUT, SIDEBAR_SHORTCUT } from './sidebar'
 import { SHORTCUT_ACTIONS, type ShortcutAction, type ShortcutMap } from './shortcuts'
 
-type Section = 'themes' | 'folders' | 'tags' | 'accounts' | 'shortcuts' | 'about'
+type Section = 'themes' | 'folders' | 'tags' | 'ai' | 'accounts' | 'shortcuts' | 'about'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'themes', label: 'Motywy' },
   { id: 'folders', label: 'Foldery' },
   { id: 'tags', label: 'Tagi' },
+  { id: 'ai', label: 'Asystent AI' },
   { id: 'accounts', label: 'Dodawanie adresu mail' },
   { id: 'shortcuts', label: 'Skróty klawiszowe' },
   { id: 'about', label: 'O aplikacji' }
@@ -75,6 +76,7 @@ export default function Settings({
           {section === 'themes' && <Themes theme={theme} onChange={onThemeChange} />}
           {section === 'folders' && <Folders hidden={hiddenFolders} onChange={onFolderHiddenChange} />}
           {section === 'tags' && <Tags onChange={onTagsChange} />}
+          {section === 'ai' && <Assistant onChange={onTagsChange} />}
           {section === 'accounts' && <Accounts onChange={onAccountsChange} />}
           {section === 'shortcuts' && <Shortcuts shortcuts={shortcuts} onChange={onShortcutChange} />}
           {section === 'about' && <About />}
@@ -126,9 +128,10 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
   const [tags, setTags] = useState<Tag[]>([])
   const [name, setName] = useState('')
   const [color, setColor] = useState<string>(TAG_COLORS[0])
+  const [description, setDescription] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<number | null>(null)
-  const [draft, setDraft] = useState({ name: '', color: TAG_COLORS[0] as string | null })
+  const [draft, setDraft] = useState({ name: '', color: TAG_COLORS[0] as string | null, description: '' })
 
   const load = (): void => void window.api.listTags().then(setTags)
   useEffect(load, [])
@@ -148,11 +151,14 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
 
   const create = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
-    if (await run(() => window.api.createTag(name, color))) setName('')
+    if (await run(() => window.api.createTag(name, color, description))) {
+      setName('')
+      setDescription('')
+    }
   }
 
   const save = async (id: number): Promise<void> => {
-    if (await run(() => window.api.updateTag(id, draft.name, draft.color))) setEditing(null)
+    if (await run(() => window.api.updateTag(id, draft.name, draft.color, draft.description))) setEditing(null)
   }
 
   const remove = (tag: Tag): void => {
@@ -166,7 +172,7 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
       <h3>Tagi</h3>
       <p className="muted">
         Tutaj tworzysz własne tagi. W wiadomościach można potem dodawać tylko te, które są na tej liście. Tagi są
-        zapisane lokalnie i nie trafiają na serwer poczty.
+        zapisane lokalnie i nie trafiają na serwer poczty. Opis podpowiada asystentowi AI, kiedy użyć tagu.
       </p>
       <form className="tag-form" onSubmit={create}>
         <input
@@ -180,13 +186,21 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
         <button className="btn primary" disabled={!name.trim()}>
           Dodaj tag
         </button>
+        <input
+          className="tag-desc"
+          value={description}
+          maxLength={200}
+          placeholder="Opis dla AI, np. potwierdzenia złożenia aplikacji i odpowiedzi rekruterów"
+          aria-label="Opis nowego tagu dla AI"
+          onChange={(e) => setDescription(e.target.value)}
+        />
       </form>
       {error && <p className="error">{error}</p>}
       {tags.length === 0 ? (
         <p className="muted">Nie masz jeszcze żadnych tagów.</p>
       ) : (
         <ul className="tag-list">
-          {tags.map((t) => (
+          {tags.map((t, i) => (
             <li key={t.id}>
               {editing === t.id ? (
                 <>
@@ -206,6 +220,21 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
                     }}
                   />
                   <ColorPicker value={draft.color} onChange={(c) => setDraft({ ...draft, color: c })} />
+                  <input
+                    className="tag-desc"
+                    value={draft.description}
+                    maxLength={200}
+                    placeholder="Opis dla AI"
+                    aria-label={`Opis tagu ${t.name} dla AI`}
+                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.stopPropagation()
+                        setEditing(null)
+                      }
+                      if (e.key === 'Enter') void save(t.id)
+                    }}
+                  />
                   <span className="account-actions">
                     <button className="btn" onClick={() => setEditing(null)}>
                       Anuluj
@@ -217,12 +246,33 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
                 </>
               ) : (
                 <>
-                  <TagChip tag={t} />
+                  <span className="tag-row-main">
+                    <TagChip tag={t} />
+                    {t.description && <span className="muted tag-row-desc">{t.description}</span>}
+                  </span>
                   <span className="account-actions">
                     <button
                       className="btn"
+                      disabled={i === 0}
+                      aria-label={`Przesuń tag ${t.name} w górę`}
+                      title="W górę"
+                      onClick={() => void run(() => window.api.moveTag(t.id, 'up'))}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={i === tags.length - 1}
+                      aria-label={`Przesuń tag ${t.name} w dół`}
+                      title="W dół"
+                      onClick={() => void run(() => window.api.moveTag(t.id, 'down'))}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      className="btn"
                       onClick={() => {
-                        setDraft({ name: t.name, color: t.color })
+                        setDraft({ name: t.name, color: t.color, description: t.description })
                         setEditing(t.id)
                       }}
                     >
@@ -238,6 +288,120 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
           ))}
         </ul>
       )}
+    </>
+  )
+}
+
+const AI_STATE_TEXT: Record<AiState, string> = {
+  disabled: 'Wyłączony',
+  idle: 'Gotowy',
+  working: 'Taguje wiadomości…',
+  unavailable: 'Ollama nie odpowiada',
+  'no-model': 'Brak modelu w Ollamie',
+  'no-tags': 'Najpierw utwórz tagi'
+}
+
+function Assistant({ onChange }: { onChange: () => void }): JSX.Element {
+  const [status, setStatus] = useState<AiStatus | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let current = true
+    const load = (): void => void window.api.getAiStatus().then((s) => current && setStatus(s))
+    load()
+    const timer = setInterval(load, 2000)
+    return () => {
+      current = false
+      clearInterval(timer)
+    }
+  }, [])
+
+  const save = async (patch: Partial<Pick<AiStatus, 'enabled' | 'model'>>): Promise<void> => {
+    if (!status) return
+    try {
+      await window.api.setAiConfig({ enabled: status.enabled, model: status.model, ...patch })
+      setError(null)
+      setStatus(await window.api.getAiStatus())
+    } catch (err) {
+      setError(ipcError(err))
+    }
+  }
+
+  const reprocess = async (): Promise<void> => {
+    await window.api.reprocessAi()
+    setStatus(await window.api.getAiStatus())
+    onChange()
+  }
+
+  if (!status) return <p className="muted">Wczytywanie…</p>
+  const installed = status.models?.includes(status.model) ?? false
+  // zainstalowane modele plus wybrany, nawet jeśli go (jeszcze) nie ma
+  const options = [...new Set([...(status.models ?? []), status.model])]
+
+  return (
+    <>
+      <h3>Asystent AI</h3>
+      <p className="muted">
+        Lokalny model (Ollama) przypisuje nowym wiadomościom tagi z Twojej listy. Treść maili nie opuszcza tego
+        komputera. Dotyczy wiadomości z ostatnich 30 dni w Odebranych i Archiwum, a tagi dodane ręcznie nigdy nie są
+        zmieniane.
+      </p>
+      <ul className="folder-toggles">
+        <li>
+          <label>
+            <span className="folder-toggle-text">
+              <span>Automatyczne tagowanie</span>
+              <span className="muted">Nowe wiadomości dostają tagi po synchronizacji</span>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch"
+              checked={status.enabled}
+              onChange={(e) => void save({ enabled: e.target.checked })}
+            />
+          </label>
+        </li>
+      </ul>
+      <dl className="ai-status">
+        <dt>Stan</dt>
+        <dd className={status.state === 'unavailable' || status.state === 'no-model' ? 'error' : ''}>
+          {AI_STATE_TEXT[status.state]}
+          {status.pending > 0 && status.state !== 'disabled' && (
+            <span className="muted"> · do otagowania: {status.pending}</span>
+          )}
+        </dd>
+        <dt>Model</dt>
+        <dd>
+          <select value={status.model} onChange={(e) => void save({ model: e.target.value })} aria-label="Model">
+            {options.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </dd>
+      </dl>
+      {status.models === null && (
+        <p className="error">
+          Nie można połączyć się z Ollamą. Uruchom ją poleceniem <code>ollama serve</code> (albo aplikacją Ollama).
+        </p>
+      )}
+      {status.models !== null && !installed && (
+        <p className="error">
+          Modelu {status.model} nie ma w Ollamie. Pobierz go poleceniem <code>ollama pull {status.model}</code>.
+        </p>
+      )}
+      {status.error && status.state !== 'idle' && <p className="muted">{status.error}</p>}
+      {error && <p className="error">{error}</p>}
+      <p>
+        <button className="btn" onClick={() => void reprocess()} disabled={!status.enabled}>
+          Otaguj ponownie ostatnie 30 dni
+        </button>
+      </p>
+      <p className="muted">
+        Użyj po dodaniu nowych tagów albo zmianie modelu. Tagi nadane wcześniej przez AI zostaną zastąpione nowymi.
+      </p>
     </>
   )
 }

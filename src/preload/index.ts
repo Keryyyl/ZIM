@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ContactInit, ContactMail } from '@shared/contact'
 import type {
   Account,
+  AiConfig,
+  AiStatus,
   Folder,
   MessageDetail,
   MessageQuery,
@@ -34,9 +36,23 @@ const api = {
   /** Okno wyboru zdjęcia; zwraca data URL albo null po anulowaniu */
   pickContactPhoto: (): Promise<string | null> => ipcRenderer.invoke('contacts:pickPhoto'),
   listTags: (): Promise<Tag[]> => ipcRenderer.invoke('tags:list'),
-  createTag: (name: string, color: string | null): Promise<Tag> => ipcRenderer.invoke('tags:create', name, color),
-  updateTag: (id: number, name: string, color: string | null): Promise<Tag> =>
-    ipcRenderer.invoke('tags:update', id, name, color),
+  createTag: (name: string, color: string | null, description: string): Promise<Tag> =>
+    ipcRenderer.invoke('tags:create', name, color, description),
+  updateTag: (id: number, name: string, color: string | null, description: string): Promise<Tag> =>
+    ipcRenderer.invoke('tags:update', id, name, color, description),
+  getAiStatus: (): Promise<AiStatus> => ipcRenderer.invoke('ai:status'),
+  setAiConfig: (config: AiConfig): Promise<void> => ipcRenderer.invoke('ai:setConfig', config),
+  reprocessAi: (): Promise<void> => ipcRenderer.invoke('ai:reprocess'),
+  /** Tagi od AI dla jednej wiadomości od razu; zwraca ją z nowymi tagami */
+  summarizeMessage: (id: number, force = false): Promise<string | null> =>
+    ipcRenderer.invoke('messages:summary', id, force),
+  reclassifyMessage: (id: number): Promise<MessageDetail | null> => ipcRenderer.invoke('messages:reclassify', id),
+  onAiTagged: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('ai:tagged', listener)
+    return () => ipcRenderer.removeListener('ai:tagged', listener)
+  },
+  moveTag: (id: number, direction: 'up' | 'down'): Promise<void> => ipcRenderer.invoke('tags:move', id, direction),
   deleteTag: (id: number): Promise<void> => ipcRenderer.invoke('tags:delete', id),
   /** Tylko istniejące tagi; nowe powstają wyłącznie w ustawieniach */
   tagMessages: (ids: number[], tagId: number, on: boolean): Promise<void> =>

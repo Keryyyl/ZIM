@@ -31,19 +31,36 @@ import {
   setStarred
 } from './db/messages'
 import { contactMail, deleteContact, listContacts, saveContact } from './db/contacts'
-import { createTag, deleteTag, listTags, setMessageTag, updateTag } from './db/tags'
+import { createTag, deleteTag, listTags, moveTag, setMessageTag, updateTag } from './db/tags'
+import { getAiConfig, setAiConfig } from './db/settings'
+import { classifyWithOllama } from './classifier/llm'
+import { listModels } from './classifier/ollama'
+import { ensureOllamaRunning, stopOllama } from './classifier/ollama-server'
+import { createClassifier, type Classifier } from './classifier/queue'
+import { createSummarizer, summarizeWithOllama } from './classifier/summary'
 import { syncAccount } from './mail/sync'
 import { createSecretStore } from './secrets'
 import type { Account, Folder, MessageQuery, OutgoingDraft, PickedFile, SyncStatus } from '@shared/types'
 
 let db: ReturnType<typeof openDb>
 let secrets: ReturnType<typeof createSecretStore>
+let classifier: Classifier
 const syncing = new Map<number, AbortController>()
 // konta, dla których przyszła nowa zmiana w trakcie synchronizacji: po niej startujemy jeszcze raz
 const rerun = new Set<number>()
 // spinner "Łączenie…" tylko przy pierwszej synchronizacji, a nie przy każdym odpytaniu serwera
 const syncedOnce = new Set<number>()
 const POLL_MS = 60_000
+
+// tagi od AI pojawiają się pojedynczo; UI odświeżamy najwyżej co chwilę
+let taggedTimer: NodeJS.Timeout | undefined
+function notifyTagged(): void {
+  if (taggedTimer) return
+  taggedTimer = setTimeout(() => {
+    taggedTimer = undefined
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send('ai:tagged')
+  }, 1500)
+}
 
 function sendSyncStatus(status: SyncStatus): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send('sync:status', status)
@@ -73,6 +90,7 @@ function startSync(account: Account): void {
     .then(() => {
       syncedOnce.add(account.id)
       sendSyncStatus({ ...base, state: 'idle', ...progress })
+      classifier.kick() // nowe maile mogły właśnie wylądować w bazie
     })
     .catch((e: Error) => {
       if (controller.signal.aborted) return
@@ -247,10 +265,18 @@ app.whenReady().then(() => {
 
   // tagi są tylko lokalne, więc bez action(): nie ma czego wypychać na serwer
   ipcMain.handle('tags:list', () => listTags(db))
-  ipcMain.handle('tags:create', (_e, name: unknown, color: unknown) => createTag(db, name, color))
-  ipcMain.handle('tags:update', (_e, id: unknown, name: unknown, color: unknown) => {
+  ipcMain.handle('tags:create', (_e, name: unknown, color: unknown, description: unknown) => {
+    const tag = createTag(db, name, color, description)
+    classifier.kick() // bez tagów klasyfikator stał; teraz ma z czego wybierać
+    return tag
+  })
+  ipcMain.handle('tags:update', (_e, id: unknown, name: unknown, color: unknown, description: unknown) => {
     if (!Number.isInteger(id)) throw new Error('Nieznany tag')
-    return updateTag(db, id as number, name, color)
+    return updateTag(db, id as number, name, color, description)
+  })
+  ipcMain.handle('tags:move', (_e, id: unknown, direction: unknown) => {
+    if (!Number.isInteger(id) || (direction !== 'up' && direction !== 'down')) throw new Error('Nieznany tag')
+    moveTag(db, id as number, direction)
   })
   ipcMain.handle('tags:delete', (_e, id: unknown) => {
     if (Number.isInteger(id)) deleteTag(db, id as number)
@@ -390,7 +416,37 @@ app.whenReady().then(() => {
   })
 
   void pruneCache(attachmentsRoot(), CACHE_LIMIT).catch(() => undefined)
+  classifier = createClassifier({
+    db,
+    config: () => getAiConfig(db),
+    classify: classifyWithOllama,
+    onTagged: notifyTagged,
+    onArchived: schedulePush
+  })
+  ipcMain.handle('ai:status', async () => ({ ...classifier.status(), models: await listModels() }))
+  ipcMain.handle('ai:setConfig', (_e, config: unknown) => {
+    setAiConfig(db, config)
+    classifier.kick()
+  })
+  // po dodaniu tagów albo zmianie modelu: ostatnie maile tagowane od nowa
+  ipcMain.handle('ai:reprocess', () => classifier.reprocess())
+  ipcMain.handle('messages:reclassify', async (_e, id: unknown) => {
+    if (!Number.isInteger(id)) throw new Error('Nieznana wiadomość')
+    await classifier.classifyNow(id as number)
+    return getMessage(db, id as number)
+  })
+
+  // skrót wiadomości powstaje dopiero po jej otwarciu; kolejka tagowania nie jest wstrzymywana
+  const summarizer = createSummarizer({ db, config: () => getAiConfig(db), summarize: summarizeWithOllama })
+  ipcMain.handle('messages:summary', (_e, id: unknown, force: unknown) => {
+    if (!Number.isInteger(id)) throw new Error('Nieznana wiadomość')
+    return summarizer.get(id as number, force === true)
+  })
+
   createWindow()
+  // serwer Ollamy startuje razem z aplikacją (tylko gdy asystent jest włączony); dopiero potem tagowanie
+  if (getAiConfig(db).enabled) void ensureOllamaRunning().then(() => classifier.kick())
+  else classifier.kick()
   // zmiany zrobione w innych klientach (Gmail w przeglądarce, telefon): przy starcie,
   // co minutę i po powrocie do okna
   syncAll()
@@ -403,6 +459,9 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+// zamykamy tylko serwer, który uruchomiliśmy sami; cudzy (aplikacja Ollama, brew services) zostaje
+app.on('will-quit', stopOllama)
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

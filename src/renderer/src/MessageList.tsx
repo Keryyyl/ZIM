@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { ComposeButton, SettingsButton } from './HeaderButtons'
 import SidebarToggle from './SidebarToggle'
+import { isPriorityName } from '@shared/priority'
 import type { Account, MailboxView, MessageRow } from '@shared/types'
 
 /** Nazwa skrzynki w UI: alias, a gdy go brak, adres e-mail */
@@ -21,6 +22,7 @@ function formatDate(ms: number): string {
 
 const EMPTY_TEXT: Record<MailboxView, string> = {
   inbox: 'Brak wiadomości w tej skrzynce.',
+  all: 'Brak wiadomości.',
   starred: 'Brak wiadomości oznaczonych gwiazdką.',
   archive: 'Archiwum jest puste.',
   spam: 'Brak spamu.',
@@ -248,7 +250,7 @@ export default function MessageList(props: Props): JSX.Element {
                     {allStarred ? '☆ Usuń gwiazdkę' : '★ Oznacz gwiazdką'}
                   </button>
                 )}
-                {(view === 'inbox' || view === 'starred') && (
+                {(view === 'inbox' || view === 'starred' || view === 'all') && (
                   <button className="btn" disabled={busy} onClick={archive}>
                     Archiwizuj
                   </button>
@@ -317,11 +319,17 @@ export default function MessageList(props: Props): JSX.Element {
                 onChange={() => undefined /* obsługa w onClick, bo potrzebny jest shiftKey */}
                 aria-label={`Zaznacz: ${m.subject || '(bez tematu)'}`}
               />
-              <span
-                className="row-tag-dot"
-                style={m.tags[0]?.color ? ({ '--tag': m.tags[0].color } as React.CSSProperties) : undefined}
-                title={m.tags[0]?.name}
-              />
+              {/* kropka ma kolor tagu opisowego; tagi ważności (Pilne/Luźne/Zachować) jej nie ustalają */}
+              {(() => {
+                const kind = m.tags.find((t) => !isPriorityName(t.name))
+                return (
+                  <span
+                    className="row-tag-dot"
+                    style={kind?.color ? ({ '--tag': kind.color } as React.CSSProperties) : undefined}
+                    title={kind?.name}
+                  />
+                )
+              })()}
               <span className="from" title={m.from}>
                 {senderName(m.from)}
               </span>

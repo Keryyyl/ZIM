@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS messages (
   server_flagged INTEGER,
   -- 0 = załączników z BODYSTRUCTURE jeszcze nie zapisaliśmy (wiadomości sprzed ich obsługi)
   attachments_checked INTEGER NOT NULL DEFAULT 0,
+  -- tagowanie przez asystenta AI: NULL = jeszcze nie sklasyfikowana; po 3 nieudanych próbach rezygnujemy
+  classified_at INTEGER,
+  classify_attempts INTEGER NOT NULL DEFAULT 0,
+  -- 1 = nagłówek List-Unsubscribe (newsletter, powiadomienie masowe); starsze wiadomości mają 0 (nieznane)
+  bulk INTEGER NOT NULL DEFAULT 0,
+  -- skrót wiadomości od AI, tworzony dopiero przy otwarciu (punkty w osobnych liniach)
+  summary TEXT,
   UNIQUE (account_id, uid)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
@@ -49,7 +56,15 @@ CREATE INDEX IF NOT EXISTS idx_messages_message_id ON messages(message_id);
 CREATE TABLE IF NOT EXISTS tags (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
-  color TEXT
+  color TEXT,
+  description TEXT NOT NULL DEFAULT '', -- opis dla asystenta AI
+  position INTEGER NOT NULL DEFAULT 0 -- kolejność ustawiona przez użytkownika
+);
+
+-- ustawienia procesu głównego (renderer trzyma swoje w localStorage)
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS message_tags (
@@ -193,10 +208,25 @@ function migrate(db: Database.Database): void {
   if (!msgColumns.includes('attachments_checked')) {
     db.exec('ALTER TABLE messages ADD COLUMN attachments_checked INTEGER NOT NULL DEFAULT 0')
   }
+  if (!msgColumns.includes('bulk')) db.exec('ALTER TABLE messages ADD COLUMN bulk INTEGER NOT NULL DEFAULT 0')
+  if (!msgColumns.includes('summary')) db.exec('ALTER TABLE messages ADD COLUMN summary TEXT')
   // wiadomości sprzed indeksu pełnotekstowego nie mają wpisów w FTS: zbuduj go od nowa
   const indexed = (db.prepare('SELECT count(*) AS n FROM messages_fts_docsize').get() as { n: number }).n
   const total = (db.prepare('SELECT count(*) AS n FROM messages').get() as { n: number }).n
   if (indexed !== total) db.exec("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
+  if (!msgColumns.includes('classified_at')) {
+    db.exec(`
+      ALTER TABLE messages ADD COLUMN classified_at INTEGER;
+      ALTER TABLE messages ADD COLUMN classify_attempts INTEGER NOT NULL DEFAULT 0;
+    `)
+  }
+  const tagColumns = (db.prepare('PRAGMA table_info(tags)').all() as { name: string }[]).map((c) => c.name)
+  if (!tagColumns.includes('description')) db.exec("ALTER TABLE tags ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+  if (!tagColumns.includes('position')) {
+    db.exec('ALTER TABLE tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
+    // dotychczasowa kolejność (alfabetyczna) staje się punktem wyjścia
+    db.exec('UPDATE tags SET position = (SELECT COUNT(*) FROM tags o WHERE lower(o.name) < lower(tags.name) OR (lower(o.name) = lower(tags.name) AND o.id < tags.id)) + 1')
+  }
   // indeksy na kolumnach z migracji, więc dopiero po ALTER TABLE
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_location ON messages(account_id, mailbox, server_uid);

@@ -18,6 +18,18 @@ nodemailer, Vitest. Menedżer pakietów: pnpm.
   a treść pobierana na żądanie jedną częścią MIME (`mail/attachment-cache.ts`) do cache w `userData/attachments`
   (limit 2 GB, usuwanie najdawniej używanych). Renderer zna tylko id załącznika, nigdy ścieżkę ani UID.
   Nazwy plików z maili przechodzą przez `safeFilename`; pliki wykonywalne wymagają potwierdzenia przed otwarciem.
+- Asystent AI (`src/main/classifier/`): lokalny model przez Ollamę (`ollama.ts` to wspólny klient, użyje go też
+  podsumowanie maila). Tagowanie (`llm.ts`, `queue.ts`) wybiera tylko spośród istniejących tagów, w oparciu o ich
+  opisy (`tags.description`), a odpowiedź jest wymuszona schematem JSON. Kolejka działa w tle po synchronizacji
+  dla maili z ostatnich 30 dni z Odebranych/Archiwum; tagi od AI mają `message_tags.source = 'llm'` i nigdy nie
+  nadpisują ręcznych. Gdy Ollama nie działa, kolejka kończy po cichu (bez zużywania prób) i wraca przy następnej synchronizacji.
+  Treść maila jest daną, nie poleceniem: model nie wykonuje żadnych akcji, może tylko wybrać tagi z listy.
+- Serwer Ollamy (`classifier/ollama-server.ts`): przy starcie aplikacji, gdy asystent jest włączony i serwer nie odpowiada,
+  uruchamiamy `ollama serve` jako proces potomny i zatrzymujemy go przy wyjściu. Cudzego serwera (aplikacja Ollama,
+  brew services) nie ruszamy.
+- Skrót maila (`classifier/summary.ts`): tworzony dopiero po otwarciu wiadomości (nigdy w tle), zapisywany w
+  `messages.summary` i pokazywany w zwijanej sekcji nad treścią. Pomijany dla krótkich maili (`shared/summary.ts`)
+  i przy wyłączonym asystencie; ten sam klient Ollamy i ta sama zasada „treść to dane, nie polecenie”.
 - Najpierw reguły, LLM tylko jako fallback dla niesklasyfikowanych maili. Domyślnie lokalny model (Ollama).
 - HTML maili renderować przez DOMPurify w iframe z sandboxem, z zablokowanymi zdalnymi obrazkami.
 

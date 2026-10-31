@@ -32,7 +32,7 @@ export interface Message {
 export type Folder = 'inbox' | 'archive' | 'spam' | 'trash'
 
 /** Folder albo widok "Oznaczone gwiazdką" (gwiazdka w każdym folderze poza spamem i koszem) */
-export type MailboxView = Folder | 'starred'
+export type MailboxView = Folder | 'starred' | 'all'
 
 export interface MessageQuery {
   accountId: number | null // null = wszystkie konta
@@ -106,6 +106,8 @@ export interface MessageDetail extends MessageRow {
   bodyText: string
   bodyHtml: string | null
   attachments: Attachment[]
+  /** Skrót od asystenta AI (punkty rozdzielone \n); null = jeszcze nie powstał */
+  summary: string | null
 }
 
 export type Priority = 'important' | 'normal' | 'noise'
@@ -114,6 +116,26 @@ export interface Tag {
   id: number
   name: string // np. "rekrutacja/potwierdzenie"
   color: string | null
+  /** Opis dla asystenta AI, np. "automatyczne potwierdzenia aplikacji"; pusty = model zna tylko nazwę */
+  description: string
+}
+
+export interface AiConfig {
+  /** Automatyczne tagowanie nowych wiadomości lokalnym modelem */
+  enabled: boolean
+  /** Nazwa modelu w Ollamie, np. "gemma3:4b" */
+  model: string
+}
+
+export type AiState = 'disabled' | 'idle' | 'working' | 'unavailable' | 'no-model' | 'no-tags'
+
+export interface AiStatus extends AiConfig {
+  state: AiState
+  /** Wiadomości z ostatnich 30 dni czekające na tagi */
+  pending: number
+  error?: string
+  /** Modele zainstalowane w Ollamie; null = Ollama nie odpowiada */
+  models: string[] | null
 }
 
 /** Widok = zapytanie po tagach/priorytecie, np. "Główna" = priority important */

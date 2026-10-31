@@ -1,11 +1,18 @@
 import type Database from 'better-sqlite3'
 import type { Folder, MailboxView, MessageDetail, MessageQuery, MessageRow } from '@shared/types'
 import { listAttachments } from './attachments'
-import { tagsByMessage } from './tags'
+import { PRIORITY_TAGS, tagsByMessage } from './tags'
 
 const FOLDERS: readonly Folder[] = ['inbox', 'archive', 'spam', 'trash']
-const VIEWS: readonly MailboxView[] = [...FOLDERS, 'starred']
+const VIEWS: readonly MailboxView[] = [...FOLDERS, 'starred', 'all']
 const LIMIT = 1000
+
+/** Odebrane: Pilne, potem Luźne, potem bez tagu priorytetu (np. jeszcze nieprzetworzone), na końcu Zachować; w grupie od najnowszych. */
+const INBOX_ORDER = `(SELECT COALESCE(MIN(CASE lower(t.name) ${PRIORITY_TAGS.map(
+  (n, i) => `WHEN '${n.toLowerCase()}' THEN ${i === PRIORITY_TAGS.length - 1 ? 3 : i}`
+).join(' ')} END), 2)
+       FROM message_tags mt JOIN tags t ON t.id = mt.tag_id
+       WHERE mt.message_id = messages.id) , date DESC`
 
 export function isFolder(value: unknown): value is Folder {
   return FOLDERS.includes(value as Folder)
@@ -57,7 +64,9 @@ export function listMessages(db: Database.Database, query: MessageQuery): Messag
       ? "folder IN ('inbox', 'archive') AND EXISTS (SELECT 1 FROM message_tags mt WHERE mt.message_id = messages.id AND mt.tag_id = @tagId)"
       : view === 'starred'
         ? "starred = 1 AND folder IN ('inbox', 'archive')"
-        : 'folder = @view'
+        : view === 'all'
+          ? "folder IN ('inbox', 'archive')"
+          : 'folder = @view'
   const rows = db
     .prepare(
       `SELECT id, account_id AS accountId, from_addr AS "from", subject, date, snippet,
@@ -65,7 +74,7 @@ export function listMessages(db: Database.Database, query: MessageQuery): Messag
               EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = messages.id AND a.inline = 0) AS hasAttachments
        FROM messages
        WHERE ${where} AND (@accountId IS NULL OR account_id = @accountId)
-       ORDER BY date DESC LIMIT ${LIMIT}`
+       ORDER BY ${tagId === null && correspondent === null && view === 'inbox' ? INBOX_ORDER : 'date DESC'} LIMIT ${LIMIT}`
     )
     .all({ view, tagId, correspondent, accountId: query.accountId ?? null }) as RawRow[]
   return withTags(db, rows)
@@ -103,7 +112,7 @@ export function getMessage(db: Database.Database, id: number): MessageDetail | n
   const row = db
     .prepare(
       `SELECT id, account_id AS accountId, from_addr AS "from", to_addr AS "to", subject, date, snippet,
-              body_text AS bodyText, body_html AS bodyHtml, read, starred, folder, priority
+              body_text AS bodyText, body_html AS bodyHtml, read, starred, folder, priority, summary
        FROM messages WHERE id = ? AND folder != 'deleted'`
     )
     .get(id) as
