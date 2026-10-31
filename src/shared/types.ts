@@ -1,3 +1,6 @@
+import type { AiProvider, CloudProvider } from './ai'
+import type { SystemTagKey } from './priority'
+
 export interface Account {
   id: number
   email: string
@@ -118,16 +121,20 @@ export interface Tag {
   color: string | null
   /** Opis dla asystenta AI, np. "automatyczne potwierdzenia aplikacji"; pusty = model zna tylko nazwę */
   description: string
+  /** Wbudowany tag ważności (Pilne/Luźne/Zachować): nie da się go usunąć, ale można zmienić nazwę, kolor i opis */
+  system?: SystemTagKey | null
 }
 
 export interface AiConfig {
-  /** Automatyczne tagowanie nowych wiadomości lokalnym modelem */
+  /** false = asystent wyłączony (żadnych zapytań do żadnego modelu) */
   enabled: boolean
-  /** Nazwa modelu w Ollamie, np. "gemma3:4b" */
+  /** Pobrany model (Ollama) albo dostawca w chmurze */
+  provider: AiProvider
+  /** Nazwa modelu u wybranego dostawcy, np. "gemma3:4b" albo "claude-haiku-5-5" */
   model: string
 }
 
-export type AiState = 'disabled' | 'idle' | 'working' | 'unavailable' | 'no-model' | 'no-tags'
+export type AiState = 'disabled' | 'idle' | 'working' | 'unavailable' | 'no-model' | 'no-key' | 'no-tags'
 
 export interface AiStatus extends AiConfig {
   state: AiState
@@ -136,6 +143,12 @@ export interface AiStatus extends AiConfig {
   error?: string
   /** Modele zainstalowane w Ollamie; null = Ollama nie odpowiada */
   models: string[] | null
+  /** Czy zapisano klucz API danego dostawcy (samego klucza renderer nigdy nie dostaje) */
+  keys: Record<CloudProvider, boolean>
+  /** Czy użytkownik zgodził się na wysyłanie treści maili do danego dostawcy */
+  consent: Record<CloudProvider, boolean>
+  /** Model zapamiętany dla każdego dostawcy, żeby przełączanie niczego nie gubiło */
+  modelsByProvider: Record<AiProvider, string>
 }
 
 /** Widok = zapytanie po tagach/priorytecie, np. "Główna" = priority important */

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'crypto'
-import { copyFile, readFile, stat } from 'fs/promises'
+import { copyFile, readFile, stat, writeFile } from 'fs/promises'
 import { basename, extname, join } from 'path'
 import { openDb } from './db'
 import { getAttachment } from './db/attachments'
@@ -32,12 +32,14 @@ import {
 } from './db/messages'
 import { contactMail, deleteContact, listContacts, saveContact } from './db/contacts'
 import { createTag, deleteTag, listTags, moveTag, setMessageTag, updateTag } from './db/tags'
-import { getAiConfig, setAiConfig } from './db/settings'
-import { classifyWithOllama } from './classifier/llm'
+import { consentByProvider, getAiConfig, modelsByProvider, setAiConfig } from './db/settings'
+import { classifyWith } from './classifier/llm'
+import { createChat } from './classifier/providers'
+import { CLOUD_PROVIDERS, isCloud, type CloudProvider } from '@shared/ai'
 import { listModels } from './classifier/ollama'
 import { ensureOllamaRunning, stopOllama } from './classifier/ollama-server'
 import { createClassifier, type Classifier } from './classifier/queue'
-import { createSummarizer, summarizeWithOllama } from './classifier/summary'
+import { createSummarizer, summarizeWith } from './classifier/summary'
 import { syncAccount } from './mail/sync'
 import { createSecretStore } from './secrets'
 import type { Account, Folder, MessageQuery, OutgoingDraft, PickedFile, SyncStatus } from '@shared/types'
@@ -341,6 +343,23 @@ app.whenReady().then(() => {
     return true
   })
 
+  // zapis małego pliku tekstowego z natywnym oknem „Zapisz jako” (np. szablon własnego motywu)
+  ipcMain.handle('files:saveText', async (e, filename: unknown, content: unknown): Promise<boolean> => {
+    if (typeof filename !== 'string' || typeof content !== 'string' || content.length > 100_000) {
+      throw new Error('Nieprawidłowy plik')
+    }
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const options: Electron.SaveDialogOptions = {
+      title: 'Zapisz plik',
+      defaultPath: join(app.getPath('downloads'), safeFilename(filename)),
+      filters: [{ name: 'Plik JSON', extensions: ['json'] }]
+    }
+    const target = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options)
+    if (target.canceled || !target.filePath) return false
+    await writeFile(target.filePath, content, 'utf8')
+    return true
+  })
+
   ipcMain.handle('compose:pickFiles', async (e): Promise<PickedFile[]> => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const options: Electron.OpenDialogOptions = {
@@ -416,16 +435,47 @@ app.whenReady().then(() => {
   })
 
   void pruneCache(attachmentsRoot(), CACHE_LIMIT).catch(() => undefined)
+  const readKey = (provider: CloudProvider): string | null => {
+    try {
+      return secrets.get(`ai:${provider}`)
+    } catch {
+      return null // klucz nie do odszyfrowania (np. inny profil systemu): traktujemy jak brak
+    }
+  }
+  const chat = createChat(readKey)
+  // lokalny model: serwer Ollamy startuje razem z aplikacją; model w chmurze nie potrzebuje niczego
+  const startAi = (): void => {
+    const cfg = getAiConfig(db)
+    if (cfg.enabled && !isCloud(cfg.provider)) void ensureOllamaRunning().then(() => classifier.kick())
+    else classifier.kick()
+  }
   classifier = createClassifier({
     db,
     config: () => getAiConfig(db),
-    classify: classifyWithOllama,
+    classify: classifyWith(chat),
     onTagged: notifyTagged,
     onArchived: schedulePush
   })
-  ipcMain.handle('ai:status', async () => ({ ...classifier.status(), models: await listModels() }))
+  ipcMain.handle('ai:status', async () => {
+    const status = classifier.status()
+    return {
+      ...status,
+      models: status.provider === 'ollama' ? await listModels() : null,
+      keys: Object.fromEntries(CLOUD_PROVIDERS.map((p) => [p, readKey(p) !== null])),
+      consent: consentByProvider(db),
+      modelsByProvider: modelsByProvider(db)
+    }
+  })
   ipcMain.handle('ai:setConfig', (_e, config: unknown) => {
     setAiConfig(db, config)
+    startAi()
+  })
+  // klucz API trafia tylko do Keychain; renderer nigdy go nie odczyta, wie jedynie, że istnieje
+  ipcMain.handle('ai:setKey', (_e, provider: unknown, key: unknown) => {
+    if (!CLOUD_PROVIDERS.includes(provider as CloudProvider)) throw new Error('Nieznany dostawca modelu')
+    if (key === null) secrets.delete(`ai:${provider}`)
+    else if (typeof key === 'string' && /^[\x21-\x7e]{8,400}$/.test(key.trim())) secrets.set(`ai:${provider}`, key.trim())
+    else throw new Error('Klucz API wygląda nieprawidłowo (bez spacji, 8-400 znaków)')
     classifier.kick()
   })
   // po dodaniu tagów albo zmianie modelu: ostatnie maile tagowane od nowa
@@ -437,7 +487,7 @@ app.whenReady().then(() => {
   })
 
   // skrót wiadomości powstaje dopiero po jej otwarciu; kolejka tagowania nie jest wstrzymywana
-  const summarizer = createSummarizer({ db, config: () => getAiConfig(db), summarize: summarizeWithOllama })
+  const summarizer = createSummarizer({ db, config: () => getAiConfig(db), summarize: summarizeWith(chat) })
   ipcMain.handle('messages:summary', (_e, id: unknown, force: unknown) => {
     if (!Number.isInteger(id)) throw new Error('Nieznana wiadomość')
     return summarizer.get(id as number, force === true)
@@ -445,8 +495,7 @@ app.whenReady().then(() => {
 
   createWindow()
   // serwer Ollamy startuje razem z aplikacją (tylko gdy asystent jest włączony); dopiero potem tagowanie
-  if (getAiConfig(db).enabled) void ensureOllamaRunning().then(() => classifier.kick())
-  else classifier.kick()
+  startAi()
   // zmiany zrobione w innych klientach (Gmail w przeglądarce, telefon): przy starcie,
   // co minutę i po powrocie do okna
   syncAll()

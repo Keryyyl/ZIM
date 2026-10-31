@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Tag } from '@shared/types'
 import { openDb } from '../db'
 import { isNoReply, MAX_ATTEMPTS } from '../db/classification'
-import { getAiConfig, setAiConfig } from '../db/settings'
-import { createTag, setMessageTag, tagsByMessage } from '../db/tags'
+import { getAiConfig, getConsent, modelsByProvider, setAiConfig, setSetting } from '../db/settings'
+import { createTag, listTags, setMessageTag, tagsByMessage, updateTag } from '../db/tags'
 import { buildPrompt, cleanBody, parseTagIds, schemaFor } from './llm'
-import { OllamaUnavailable } from './ollama'
+import { AiUnavailable } from './errors'
 import { createClassifier } from './queue'
 
 const NOW = Date.UTC(2026, 9, 30)
@@ -78,7 +78,7 @@ function addMessage(db: Database.Database, id: number, daysAgo: number, folder =
 
 describe('kolejka klasyfikacji', () => {
   const make = (db: Database.Database, classify: ReturnType<typeof vi.fn>, enabled = true) =>
-    createClassifier({ db, config: () => ({ enabled, model: 'm' }), classify, now: () => NOW })
+    createClassifier({ db, config: () => ({ enabled, provider: 'ollama', model: 'm' }), classify, now: () => NOW })
 
   it('taguje świeże wiadomości z odebranych i archiwum, od najnowszej', async () => {
     const db = setup()
@@ -116,6 +116,7 @@ describe('kolejka klasyfikacji', () => {
 
   it('bez tagów albo po wyłączeniu nic nie robi', async () => {
     const db = setup()
+    db.prepare('DELETE FROM tags').run() // wbudowane tagi ważności są zawsze, więc usuwamy je wprost
     addMessage(db, 1, 1)
     const classify = vi.fn(async () => [])
     const noTags = make(db, classify)
@@ -135,7 +136,7 @@ describe('kolejka klasyfikacji', () => {
     addMessage(db, 1, 1)
     let down = true
     const classify = vi.fn(async () => {
-      if (down) throw new OllamaUnavailable('down', 'brak połączenia')
+      if (down) throw new AiUnavailable('down', 'brak połączenia')
       return [tag.id]
     })
     const classifier = make(db, classify)
@@ -148,6 +149,21 @@ describe('kolejka klasyfikacji', () => {
     classifier.kick()
     await vi.waitFor(() => expect(classifier.status().state).toBe('idle'))
     expect(tagsByMessage(db, [1]).get(1)).toHaveLength(1)
+  })
+
+  it('przy odrzuconym kluczu API przerywa ze stanem no-key i nie zużywa prób', async () => {
+    const db = setup()
+    createTag(db, 'Praca', null)
+    addMessage(db, 1, 1)
+    const classify = vi.fn(async () => {
+      throw new AiUnavailable('no-key', 'Anthropic odrzucił klucz API')
+    })
+    const classifier = make(db, classify)
+    classifier.kick()
+    await vi.waitFor(() => expect(classifier.status().state).toBe('no-key'))
+    expect(classifier.status().error).toBe('Anthropic odrzucił klucz API')
+    expect(classifier.status().pending).toBe(1)
+    expect(classify).toHaveBeenCalledTimes(1)
   })
 
   it('po kilku nieudanych próbach rezygnuje z wiadomości, zamiast mielić ją w kółko', async () => {
@@ -240,7 +256,7 @@ describe('kolejka klasyfikacji', () => {
     createTag(db, 'A', null)
     addMessage(db, 1, 1)
     const classifier = make(db, vi.fn(async () => {
-      throw new OllamaUnavailable('no-model', 'Brak modelu m')
+      throw new AiUnavailable('no-model', 'Brak modelu m')
     }))
     await expect(classifier.classifyNow(1)).rejects.toThrow('Brak modelu m')
   })
@@ -257,18 +273,46 @@ describe('isNoReply', () => {
 describe('ustawienia AI', () => {
   it('ma domyślne wartości i waliduje nazwę modelu', () => {
     const db = setup()
-    expect(getAiConfig(db)).toEqual({ enabled: true, model: 'gemma3:4b' })
-    expect(setAiConfig(db, { enabled: false, model: 'qwen3:4b' })).toEqual({ enabled: false, model: 'qwen3:4b' })
-    expect(() => setAiConfig(db, { enabled: true, model: 'zły model; rm' })).toThrow()
+    expect(getAiConfig(db)).toEqual({ enabled: true, provider: 'ollama', model: 'gemma3:4b' })
+    expect(setAiConfig(db, { enabled: false, provider: 'ollama', model: 'qwen3:4b' })).toEqual({
+      enabled: false,
+      provider: 'ollama',
+      model: 'qwen3:4b'
+    })
+    expect(() => setAiConfig(db, { enabled: true, provider: 'ollama', model: 'zły model; rm' })).toThrow()
+    expect(() => setAiConfig(db, { enabled: true, provider: 'inny', model: 'x' })).toThrow(/dostawc/)
+  })
+
+  it('model w chmurze wymaga zgody, a model każdego dostawcy jest pamiętany osobno', () => {
+    const db = setup()
+    const cloud = { enabled: true, provider: 'anthropic', model: 'claude-haiku-5-5' }
+    expect(() => setAiConfig(db, cloud)).toThrow(/zgod/)
+    expect(getAiConfig(db).provider).toBe('ollama') // nieudany zapis niczego nie zmienia
+
+    expect(setAiConfig(db, { ...cloud, consent: true })).toEqual(cloud)
+    expect(getConsent(db, 'anthropic')).toBe(true)
+    expect(getConsent(db, 'openai')).toBe(false)
+
+    // zgoda jest zapamiętana, więc kolejne zapisy jej nie wymagają
+    expect(setAiConfig(db, { ...cloud, model: 'claude-sonnet-5-5' }).model).toBe('claude-sonnet-5-5')
+    // powrót do lokalnego modelu nie gubi modelu chmurowego i odwrotnie
+    expect(setAiConfig(db, { enabled: true, provider: 'ollama', model: 'gemma3:4b' }).provider).toBe('ollama')
+    expect(modelsByProvider(db)).toMatchObject({ ollama: 'gemma3:4b', anthropic: 'claude-sonnet-5-5', openai: 'gpt-4o-mini' })
+  })
+
+  it('stary zapis modelu Ollamy nadal działa', () => {
+    const db = setup()
+    setSetting(db, 'ai.model', 'llama3.2:3b')
+    expect(getAiConfig(db)).toEqual({ enabled: true, provider: 'ollama', model: 'llama3.2:3b' })
   })
 })
 
 describe('grupa priorytetu', () => {
   const withPriority: Tag[] = [
     ...tags,
-    { id: 3, name: 'Pilne', color: null, description: '' },
-    { id: 4, name: 'Luźne', color: null, description: '' },
-    { id: 5, name: 'Zachować', color: null, description: '' }
+    { id: 3, name: 'Pilne', color: null, description: '', system: 'urgent' },
+    { id: 4, name: 'Luźne', color: null, description: '', system: 'loose' },
+    { id: 5, name: 'Zachować', color: null, description: '', system: 'keep' }
   ]
 
   it('schemat wymaga priorytetu i oddziela go od zwykłych tagów', () => {
@@ -298,14 +342,15 @@ describe('grupa priorytetu', () => {
 describe('tag „Zachować”', () => {
   it('przenosi wiadomość z Odebranych do Archiwum i zgłasza to kolejce', async () => {
     const db = setup()
-    const keep = createTag(db, 'Zachować', null)
+    const keep = listTags(db).find((t) => t.system === 'keep')!
+    updateTag(db, keep.id, 'Na potem', null) // archiwizuje po kluczu, więc zmiana nazwy nic nie psuje
     const other = createTag(db, 'Praca', null)
     addMessage(db, 1, 1)
     addMessage(db, 2, 2)
     const onArchived = vi.fn()
     const classifier = createClassifier({
       db,
-      config: () => ({ enabled: true, model: 'm' }),
+      config: () => ({ enabled: true, provider: 'ollama', model: 'm' }),
       classify: vi.fn(async (_t: Tag[], mail: { id: number }) => (mail.id === 2 ? [keep.id] : [other.id])),
       onArchived,
       now: () => NOW

@@ -4,7 +4,7 @@ import { isSummarizable } from '@shared/summary'
 import { loadForClassification, type ClassifyInput } from '../db/classification'
 import { getSummary, saveSummary } from '../db/summary'
 import { cleanBody } from './llm'
-import { chat } from './ollama'
+import type { ChatFn } from './providers'
 
 const BODY_MAX = 3000
 const POINTS_MAX = 4
@@ -55,10 +55,12 @@ export function parseSummary(raw: string): string[] {
 
 export type Summarize = (mail: ClassifyInput, config: AiConfig) => Promise<string[]>
 
-export const summarizeWithOllama: Summarize = async (mail, config) => {
-  const { system, user } = buildSummaryPrompt(mail)
-  return parseSummary(await chat({ model: config.model, system, user, schema: summarySchema }))
-}
+export const summarizeWith =
+  (chat: ChatFn): Summarize =>
+  async (mail, config) => {
+    const { system, user } = buildSummaryPrompt(mail)
+    return parseSummary(await chat({ config, system, user, schema: summarySchema }))
+  }
 
 export interface SummarizerDeps {
   db: Database.Database

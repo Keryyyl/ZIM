@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { extractEmail } from '../mail/address'
 import { guessSmtp } from '@shared/smtp'
+import { ensureSystemTags } from './tags'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -58,7 +59,8 @@ CREATE TABLE IF NOT EXISTS tags (
   name TEXT NOT NULL UNIQUE,
   color TEXT,
   description TEXT NOT NULL DEFAULT '', -- opis dla asystenta AI
-  position INTEGER NOT NULL DEFAULT 0 -- kolejność ustawiona przez użytkownika
+  position INTEGER NOT NULL DEFAULT 0, -- kolejność ustawiona przez użytkownika
+  system_key TEXT -- wbudowany tag ważności (urgent/loose/keep): nie do usunięcia, nazwę można zmienić
 );
 
 -- ustawienia procesu głównego (renderer trzyma swoje w localStorage)
@@ -165,6 +167,7 @@ export function openDb(path: string): Database.Database {
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
   migrate(db)
+  ensureSystemTags(db)
   return db
 }
 
@@ -222,12 +225,14 @@ function migrate(db: Database.Database): void {
   }
   const tagColumns = (db.prepare('PRAGMA table_info(tags)').all() as { name: string }[]).map((c) => c.name)
   if (!tagColumns.includes('description')) db.exec("ALTER TABLE tags ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+  if (!tagColumns.includes('system_key')) db.exec('ALTER TABLE tags ADD COLUMN system_key TEXT')
   if (!tagColumns.includes('position')) {
     db.exec('ALTER TABLE tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
     // dotychczasowa kolejność (alfabetyczna) staje się punktem wyjścia
     db.exec('UPDATE tags SET position = (SELECT COUNT(*) FROM tags o WHERE lower(o.name) < lower(tags.name) OR (lower(o.name) = lower(tags.name) AND o.id < tags.id)) + 1')
   }
   // indeksy na kolumnach z migracji, więc dopiero po ALTER TABLE
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_system_key ON tags(system_key) WHERE system_key IS NOT NULL')
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_location ON messages(account_id, mailbox, server_uid);
     CREATE INDEX IF NOT EXISTS idx_messages_folder ON messages(folder, date DESC);

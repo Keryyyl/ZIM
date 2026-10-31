@@ -1,12 +1,14 @@
 import { useState } from 'react'
 
-export type ShortcutAction = 'next' | 'prev' | 'archive' | 'reply'
+export type ShortcutAction = 'next' | 'prev' | 'archive' | 'reply' | 'search' | 'settings'
 
 export const SHORTCUT_ACTIONS: { id: ShortcutAction; label: string; default: string }[] = [
   { id: 'next', label: 'Następna wiadomość', default: 'j' },
   { id: 'prev', label: 'Poprzednia wiadomość', default: 'k' },
   { id: 'archive', label: 'Archiwizuj', default: 'e' },
-  { id: 'reply', label: 'Odpowiedz', default: 'r' }
+  { id: 'reply', label: 'Odpowiedz', default: 'r' },
+  { id: 'search', label: 'Szukaj wiadomości', default: '/' },
+  { id: 'settings', label: 'Ustawienia aplikacji', default: ',' }
 ]
 
 export type ShortcutMap = Record<ShortcutAction, string>

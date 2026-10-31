@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { CloudProvider } from '@shared/ai'
 import type { ContactInit, ContactMail } from '@shared/contact'
 import type {
   Account,
@@ -41,7 +42,10 @@ const api = {
   updateTag: (id: number, name: string, color: string | null, description: string): Promise<Tag> =>
     ipcRenderer.invoke('tags:update', id, name, color, description),
   getAiStatus: (): Promise<AiStatus> => ipcRenderer.invoke('ai:status'),
-  setAiConfig: (config: AiConfig): Promise<void> => ipcRenderer.invoke('ai:setConfig', config),
+  /** `consent` dołącza interfejs dopiero po zaznaczeniu zgody na wysyłanie treści maili do dostawcy w chmurze */
+  setAiConfig: (config: AiConfig & { consent?: boolean }): Promise<void> => ipcRenderer.invoke('ai:setConfig', config),
+  /** null usuwa klucz; klucza nie da się odczytać z powrotem */
+  setAiKey: (provider: CloudProvider, key: string | null): Promise<void> => ipcRenderer.invoke('ai:setKey', provider, key),
   reprocessAi: (): Promise<void> => ipcRenderer.invoke('ai:reprocess'),
   /** Tagi od AI dla jednej wiadomości od razu; zwraca ją z nowymi tagami */
   summarizeMessage: (id: number, force = false): Promise<string | null> =>
@@ -60,6 +64,9 @@ const api = {
   openAttachment: (id: number): Promise<void> => ipcRenderer.invoke('attachments:open', id),
   /** false = użytkownik anulował wybór miejsca zapisu */
   saveAttachment: (id: number): Promise<boolean> => ipcRenderer.invoke('attachments:save', id),
+  /** Natywne okno „Zapisz jako”; false = użytkownik anulował */
+  saveTextFile: (filename: string, content: string): Promise<boolean> =>
+    ipcRenderer.invoke('files:saveText', filename, content),
   pickFiles: (): Promise<PickedFile[]> => ipcRenderer.invoke('compose:pickFiles'),
   sendMail: (draft: OutgoingDraft): Promise<void> => ipcRenderer.invoke('compose:send', draft),
   scheduleMail: (draft: OutgoingDraft, sendAt: number): Promise<number> =>

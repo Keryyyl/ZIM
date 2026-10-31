@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3'
 import type { Tag } from '@shared/types'
+import { SYSTEM_TAGS } from '@shared/priority'
 
 const NAME_MAX = 30
-export { KEEP_TAG, PRIORITY_TAGS } from '@shared/priority'
+const TAG_COLUMNS = 'id, name, color, description, system_key AS system'
 const DESCRIPTION_MAX = 200
 const COLOR = /^#[0-9a-f]{6}$/i
 
@@ -31,7 +32,7 @@ function assertFree(db: Database.Database, name: string, exceptId: number | null
 }
 
 export function listTags(db: Database.Database): Tag[] {
-  return db.prepare('SELECT id, name, color, description FROM tags ORDER BY position, id').all() as Tag[]
+  return db.prepare(`SELECT ${TAG_COLUMNS} FROM tags ORDER BY position, id`).all() as Tag[]
 }
 
 /** Przesuwa tag o jedno miejsce w górę lub w dół listy (kolejność z Ustawień i paska bocznego). */
@@ -55,7 +56,7 @@ export function createTag(db: Database.Database, name: unknown, color: unknown, 
   const id = db
     .prepare('INSERT INTO tags (name, color, description, position) VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM tags))')
     .run(clean, col, desc).lastInsertRowid
-  return { id: Number(id), name: clean, color: col, description: desc }
+  return { id: Number(id), name: clean, color: col, description: desc, system: null }
 }
 
 /** Bez `description` (undefined) opis zostaje taki, jaki był. */
@@ -70,12 +71,40 @@ export function updateTag(db: Database.Database, id: number, name: unknown, colo
           .prepare('UPDATE tags SET name = ?, color = ?, description = ? WHERE id = ?')
           .run(clean, col, cleanDescription(description), id)
   if (result.changes === 0) throw new Error('Tag już nie istnieje')
-  return db.prepare('SELECT id, name, color, description FROM tags WHERE id = ?').get(id) as Tag
+  return db.prepare(`SELECT ${TAG_COLUMNS} FROM tags WHERE id = ?`).get(id) as Tag
 }
 
-/** Usuwa tag razem z jego przypisaniami do wiadomości (ON DELETE CASCADE). */
+/** Usuwa tag razem z jego przypisaniami do wiadomości (ON DELETE CASCADE). Wbudowanych tagów ważności nie usuwa. */
 export function deleteTag(db: Database.Database, id: number): void {
+  const tag = db.prepare('SELECT system_key FROM tags WHERE id = ?').get(id) as { system_key: string | null } | undefined
+  if (tag?.system_key) throw new Error('Tag wbudowany: można zmienić jego nazwę, kolor i opis, ale nie usunąć')
   db.prepare('DELETE FROM tags WHERE id = ?').run(id)
+}
+
+/**
+ * Wbudowane tagi ważności istnieją zawsze. Przy pierwszym uruchomieniu powstają z domyślnymi opisami;
+ * w istniejącej bazie przejmujemy tag o tej samej nazwie (z jego kolorem i opisem), a brakujące tworzymy.
+ */
+export function ensureSystemTags(db: Database.Database): void {
+  db.transaction(() => {
+    for (const def of SYSTEM_TAGS) {
+      if (db.prepare('SELECT 1 FROM tags WHERE system_key = ?').get(def.key)) continue
+      const same = db.prepare('SELECT id FROM tags WHERE lower(name) = lower(?) AND system_key IS NULL').get(def.name) as
+        | { id: number }
+        | undefined
+      if (same) {
+        db.prepare(
+          `UPDATE tags SET system_key = ?, color = COALESCE(color, ?),
+             description = CASE WHEN description = '' THEN ? ELSE description END WHERE id = ?`
+        ).run(def.key, def.color, def.description, same.id)
+      } else {
+        db.prepare(
+          `INSERT INTO tags (name, color, description, position, system_key)
+           VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM tags), ?)`
+        ).run(def.name, def.color, def.description, def.key)
+      }
+    }
+  })()
 }
 
 /** Dodaje albo zdejmuje istniejący tag; tagów nie da się tu tworzyć. */
@@ -96,7 +125,7 @@ export function tagsByMessage(db: Database.Database, ids: number[]): Map<number,
     const chunk = ids.slice(i, i + 500)
     const rows = db
       .prepare(
-        `SELECT mt.message_id AS messageId, t.id, t.name, t.color, t.description
+        `SELECT mt.message_id AS messageId, t.id, t.name, t.color, t.description, t.system_key AS system
          FROM message_tags mt JOIN tags t ON t.id = mt.tag_id
          WHERE mt.message_id IN (${chunk.map(() => '?').join(', ')})
          ORDER BY lower(t.name)`

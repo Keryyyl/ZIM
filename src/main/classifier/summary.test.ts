@@ -17,7 +17,7 @@ function setup(body = LONG): Database.Database {
 }
 
 const make = (db: Database.Database, summarize: ReturnType<typeof vi.fn>, enabled = true) =>
-  createSummarizer({ db, config: () => ({ enabled, model: 'm' }), summarize })
+  createSummarizer({ db, config: () => ({ enabled, provider: 'ollama', model: 'm' }), summarize })
 
 describe('parseSummary', () => {
   it('czyści wypunktowania, ucina i odrzuca puste', () => {

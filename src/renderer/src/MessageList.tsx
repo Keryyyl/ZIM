@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { ComposeButton, SettingsButton } from './HeaderButtons'
 import SidebarToggle from './SidebarToggle'
-import { isPriorityName } from '@shared/priority'
 import type { Account, MailboxView, MessageRow } from '@shared/types'
 
 /** Nazwa skrzynki w UI: alias, a gdy go brak, adres e-mail */
@@ -62,10 +61,13 @@ interface Props {
   /** Czy messages to już wyniki szukania */
   searchActive: boolean
   onSearch: (text: string) => void
+  /** Skrót „Szukaj”: otwórz pole wyszukiwania i ustaw w nim kursor, potem zgłoś `onSearchHandled` */
+  searchRequested: boolean
+  onSearchHandled: () => void
 }
 
 export default function MessageList(props: Props): JSX.Element {
-  const { onToggleSidebar, onCompose, composeDisabled, onOpenSettings, onToggleRight, title, subtitle, view, messages, accountsById, showAccount, hasAccounts, accounts, inbox, onSelectInbox, onChanged, onOpen, search, searchActive, onSearch } = props
+  const { onToggleSidebar, onCompose, composeDisabled, onOpenSettings, onToggleRight, title, subtitle, view, messages, accountsById, showAccount, hasAccounts, accounts, inbox, onSelectInbox, onChanged, onOpen, search, searchActive, onSearch, searchRequested, onSearchHandled } = props
   const [selection, setSelection] = useState<Set<number>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -74,6 +76,14 @@ export default function MessageList(props: Props): JSX.Element {
   const selectAllRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [searchOpen, setSearchOpen] = useState(search !== '')
+
+  useEffect(() => {
+    if (!searchRequested) return
+    setSearchOpen(true)
+    // pole mogło dopiero się pojawić; jeśli już było otwarte, wystarczy je zaznaczyć
+    requestAnimationFrame(() => searchRef.current?.select())
+    onSearchHandled()
+  }, [searchRequested])
 
   // po synchronizacji lub akcji część zaznaczonych wiadomości mogła zniknąć z listy
   const visibleIds = new Set(messages.map((m) => m.id))
@@ -321,7 +331,7 @@ export default function MessageList(props: Props): JSX.Element {
               />
               {/* kropka ma kolor tagu opisowego; tagi ważności (Pilne/Luźne/Zachować) jej nie ustalają */}
               {(() => {
-                const kind = m.tags.find((t) => !isPriorityName(t.name))
+                const kind = m.tags.find((t) => !t.system)
                 return (
                   <span
                     className="row-tag-dot"

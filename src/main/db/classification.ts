@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3'
-import { KEEP_TAG } from './tags'
 
 /** Tagujemy tylko świeże wiadomości; starsze użytkownik może dotagować ręcznie. */
 export const RECENT_DAYS = 30
@@ -92,7 +91,7 @@ export function countPending(db: Database.Database, since: number): number {
 /**
  * Zapisuje wynik modelu: poprzednie tagi od AI tej wiadomości są zastępowane,
  * a tagi dodane ręcznie zostają (INSERT OR IGNORE nie zmienia ich źródła).
- * Wiadomość z tagiem „Zachować” trafia z Odebranych do Archiwum; zwraca true, gdy została przeniesiona.
+ * Wiadomość z wbudowanym tagiem „Zachować” (po kluczu, nie po nazwie) trafia z Odebranych do Archiwum; zwraca true, gdy została przeniesiona.
  */
 export function saveClassification(db: Database.Database, messageId: number, tagIds: number[], now: number): boolean {
   return db.transaction(() => {
@@ -106,9 +105,9 @@ export function saveClassification(db: Database.Database, messageId: number, tag
           `UPDATE messages SET folder = 'archive'
            WHERE id = ? AND folder = 'inbox'
              AND EXISTS (SELECT 1 FROM message_tags mt JOIN tags t ON t.id = mt.tag_id
-                         WHERE mt.message_id = messages.id AND lower(t.name) = lower(?))`
+                         WHERE mt.message_id = messages.id AND t.system_key = 'keep')`
         )
-        .run(messageId, KEEP_TAG).changes > 0
+        .run(messageId).changes > 0
     )
   })()
 }

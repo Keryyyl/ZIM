@@ -1,16 +1,17 @@
 import type Database from 'better-sqlite3'
 import type { Folder, MailboxView, MessageDetail, MessageQuery, MessageRow } from '@shared/types'
 import { listAttachments } from './attachments'
-import { PRIORITY_TAGS, tagsByMessage } from './tags'
+import { INBOX_RANK, NO_PRIORITY_RANK } from '@shared/priority'
+import { tagsByMessage } from './tags'
 
 const FOLDERS: readonly Folder[] = ['inbox', 'archive', 'spam', 'trash']
 const VIEWS: readonly MailboxView[] = [...FOLDERS, 'starred', 'all']
 const LIMIT = 1000
 
 /** Odebrane: Pilne, potem Luźne, potem bez tagu priorytetu (np. jeszcze nieprzetworzone), na końcu Zachować; w grupie od najnowszych. */
-const INBOX_ORDER = `(SELECT COALESCE(MIN(CASE lower(t.name) ${PRIORITY_TAGS.map(
-  (n, i) => `WHEN '${n.toLowerCase()}' THEN ${i === PRIORITY_TAGS.length - 1 ? 3 : i}`
-).join(' ')} END), 2)
+const INBOX_ORDER = `(SELECT COALESCE(MIN(CASE t.system_key ${Object.entries(INBOX_RANK)
+  .map(([key, rank]) => `WHEN '${key}' THEN ${rank}`)
+  .join(' ')} END), ${NO_PRIORITY_RANK})
        FROM message_tags mt JOIN tags t ON t.id = mt.tag_id
        WHERE mt.message_id = messages.id) , date DESC`
 

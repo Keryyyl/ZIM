@@ -12,7 +12,7 @@ import {
 } from '../db/classification'
 import { listTags } from '../db/tags'
 import type { Classify } from './llm'
-import { OllamaUnavailable } from './ollama'
+import { AiUnavailable } from './errors'
 
 export interface ClassifierDeps {
   db: Database.Database
@@ -25,7 +25,8 @@ export interface ClassifierDeps {
   now?: () => number
 }
 
-export type QueueStatus = Omit<AiStatus, 'models'>
+/** Reszta stanu (modele, klucze, zgody) jest składana w `index.ts`, bo zależy od Keychain i Ollamy */
+export type QueueStatus = Omit<AiStatus, 'models' | 'keys' | 'consent' | 'modelsByProvider'>
 
 /**
  * Tło tagowania: bierze po jednej niesklasyfikowanej wiadomości (od najnowszej) i pyta model.
@@ -58,7 +59,7 @@ export function createClassifier({ db, config, classify, onTagged, onArchived, n
         if (saveClassification(db, mail.id, ids, now())) onArchived?.()
         onTagged?.()
       } catch (e) {
-        if (e instanceof OllamaUnavailable) return set(e.reason === 'no-model' ? 'no-model' : 'unavailable', e.message)
+        if (e instanceof AiUnavailable) return set(e.reason === 'down' ? 'unavailable' : e.reason, e.message)
         console.error('klasyfikacja wiadomości:', (e as Error).message)
         recordFailure(db, mail.id)
       }

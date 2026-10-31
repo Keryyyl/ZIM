@@ -1,17 +1,8 @@
-/** Mały klient lokalnego serwera Ollama; używany do tagowania, później także do podsumowań. */
+/** Mały klient lokalnego serwera Ollama; używany do tagowania i skrótów maili. */
+import { AiUnavailable } from './errors'
 
 export const OLLAMA_URL = 'http://127.0.0.1:11434'
 const REQUEST_TIMEOUT_MS = 120_000
-
-/** Ollama nie działa albo nie ma modelu: nie jest to wina wiadomości, więc nie liczymy próby. */
-export class OllamaUnavailable extends Error {
-  constructor(
-    readonly reason: 'down' | 'no-model',
-    message: string
-  ) {
-    super(message)
-  }
-}
 
 export interface ChatRequest {
   model: string
@@ -45,11 +36,11 @@ export async function chat({ model, system, user, schema, baseUrl = OLLAMA_URL }
     })
   } catch (e) {
     if ((e as Error).name === 'TimeoutError') throw new Error('Model nie odpowiedział w ciągu 2 minut')
-    throw new OllamaUnavailable('down', 'Nie można połączyć się z Ollamą. Uruchom ją (ollama serve).')
+    throw new AiUnavailable('down', 'Nie można połączyć się z Ollamą. Uruchom ją (ollama serve).')
   }
   if (!res.ok) {
     if (res.status === 404) {
-      throw new OllamaUnavailable('no-model', `Brak modelu ${model}. Pobierz go poleceniem: ollama pull ${model}`)
+      throw new AiUnavailable('no-model', `Brak modelu ${model}. Pobierz go poleceniem: ollama pull ${model}`)
     }
     throw new Error(`Ollama zwróciła błąd ${res.status}: ${(await res.text()).slice(0, 200)}`)
   }

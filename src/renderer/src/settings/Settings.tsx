@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import type { Account, AiState, AiStatus, Tag } from '@shared/types'
+import type { Account, AiConfig, AiState, AiStatus, Tag } from '@shared/types'
+import { CLOUD_PROVIDERS, isCloud, KEY_HELP, MODEL_SUGGESTIONS, PROVIDER_LABELS, type CloudProvider } from '@shared/ai'
 import TagChip, { ColorPicker, TAG_COLORS } from '../TagChip'
 import { guessSmtp } from '@shared/smtp'
-import { ACCENTS, type Theme, type ThemeMode } from './theme'
+import { buildTemplate, parseThemeFile } from './customTheme'
+import type { CustomThemes, Theme, ThemeMode } from './theme'
 import { FOLDERS, type FolderId } from './folders'
 import { RIGHT_SIDEBAR_SHORTCUT, SIDEBAR_SHORTCUT } from './sidebar'
 import { SHORTCUT_ACTIONS, type ShortcutAction, type ShortcutMap } from './shortcuts'
@@ -22,6 +24,7 @@ const SECTIONS: { id: Section; label: string }[] = [
 interface Props {
   theme: Theme
   onThemeChange: (t: Theme) => void
+  customThemes: CustomThemes
   shortcuts: ShortcutMap
   onShortcutChange: (action: ShortcutAction, key: string) => void
   hiddenFolders: Set<FolderId>
@@ -36,6 +39,7 @@ interface Props {
 export default function Settings({
   theme,
   onThemeChange,
+  customThemes,
   shortcuts,
   onShortcutChange,
   hiddenFolders,
@@ -73,7 +77,7 @@ export default function Settings({
           <button className="icon-btn close" onClick={onClose} aria-label="Zamknij">
             ✕
           </button>
-          {section === 'themes' && <Themes theme={theme} onChange={onThemeChange} />}
+          {section === 'themes' && <Themes theme={theme} onChange={onThemeChange} custom={customThemes} />}
           {section === 'folders' && <Folders hidden={hiddenFolders} onChange={onFolderHiddenChange} />}
           {section === 'tags' && <Tags onChange={onTagsChange} />}
           {section === 'ai' && <Assistant onChange={onTagsChange} />}
@@ -174,6 +178,10 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
         Tutaj tworzysz własne tagi. W wiadomościach można potem dodawać tylko te, które są na tej liście. Tagi są
         zapisane lokalnie i nie trafiają na serwer poczty. Opis podpowiada asystentowi AI, kiedy użyć tagu.
       </p>
+      <p className="muted">
+        Tagi ważności (Pilne, Luźne, Zachować) są wbudowane: porządkują Odebrane, a „Zachować” przenosi wiadomość do
+        Archiwum. Możesz zmienić ich nazwę, kolor i opis dla AI, ale nie możesz ich usunąć.
+      </p>
       <form className="tag-form" onSubmit={create}>
         <input
           value={name}
@@ -247,7 +255,14 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
               ) : (
                 <>
                   <span className="tag-row-main">
-                    <TagChip tag={t} />
+                    <span className="tag-row-title">
+                      <TagChip tag={t} />
+                      {t.system && (
+                        <span className="tag-builtin" title="Tag wbudowany: można zmienić nazwę, kolor i opis, ale nie usunąć">
+                          wbudowany
+                        </span>
+                      )}
+                    </span>
                     {t.description && <span className="muted tag-row-desc">{t.description}</span>}
                   </span>
                   <span className="account-actions">
@@ -278,9 +293,11 @@ function Tags({ onChange }: { onChange: () => void }): JSX.Element {
                     >
                       Edytuj
                     </button>
-                    <button className="btn danger" onClick={() => remove(t)}>
-                      Usuń
-                    </button>
+                    {!t.system && (
+                      <button className="btn danger" onClick={() => remove(t)}>
+                        Usuń
+                      </button>
+                    )}
                   </span>
                 </>
               )}
@@ -296,14 +313,30 @@ const AI_STATE_TEXT: Record<AiState, string> = {
   disabled: 'Wyłączony',
   idle: 'Gotowy',
   working: 'Taguje wiadomości…',
-  unavailable: 'Ollama nie odpowiada',
-  'no-model': 'Brak modelu w Ollamie',
+  unavailable: 'Model nie odpowiada',
+  'no-model': 'Nie ma takiego modelu',
+  'no-key': 'Problem z kluczem API',
   'no-tags': 'Najpierw utwórz tagi'
 }
+
+type Mode = 'none' | 'local' | 'cloud'
+
+const MODE_LABELS: { id: Mode; label: string; hint: string }[] = [
+  { id: 'none', label: 'Brak', hint: 'Żadnych tagów ani skrótów od AI' },
+  { id: 'local', label: 'Pobrany model', hint: 'Działa na tym komputerze (Ollama), treść maili nigdzie nie wychodzi' },
+  { id: 'cloud', label: 'Zewnętrzny model', hint: 'Claude albo ChatGPT przez internet, wymaga klucza API i zgody' }
+]
 
 function Assistant({ onChange }: { onChange: () => void }): JSX.Element {
   const [status, setStatus] = useState<AiStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [keyInput, setKeyInput] = useState('')
+  const [consent, setConsent] = useState(false)
+  // dostawca w chmurze wybrany w formularzu, zanim kliknięto „Włącz”
+  const [cloud, setCloud] = useState<CloudProvider>('anthropic')
+  // formularz zewnętrznego modelu jest otwarty, ale jeszcze nic nie włączono (brak klucza albo zgody)
+  const [pendingCloud, setPendingCloud] = useState(false)
+  const [modelDraft, setModelDraft] = useState<Partial<Record<CloudProvider, string>>>({})
 
   useEffect(() => {
     let current = true
@@ -316,83 +349,249 @@ function Assistant({ onChange }: { onChange: () => void }): JSX.Element {
     }
   }, [])
 
-  const save = async (patch: Partial<Pick<AiStatus, 'enabled' | 'model'>>): Promise<void> => {
-    if (!status) return
+  // przy pierwszym wczytaniu pokaż dostawcę, który już działa
+  const [synced, setSynced] = useState(false)
+  useEffect(() => {
+    if (status && !synced) {
+      if (isCloud(status.provider)) setCloud(status.provider)
+      setSynced(true)
+    }
+  }, [status, synced])
+
+  if (!status) return <p className="muted">Wczytywanie…</p>
+
+  const mode: Mode = !status.enabled ? 'none' : isCloud(status.provider) ? 'cloud' : 'local'
+  const refresh = async (): Promise<void> => setStatus(await window.api.getAiStatus())
+
+  const run = async (action: () => Promise<void>): Promise<void> => {
     try {
-      await window.api.setAiConfig({ enabled: status.enabled, model: status.model, ...patch })
+      await action()
       setError(null)
-      setStatus(await window.api.getAiStatus())
+      await refresh()
     } catch (err) {
       setError(ipcError(err))
     }
   }
 
+  const apply = (patch: Partial<AiConfig> & { consent?: boolean }): Promise<void> =>
+    run(() =>
+      window.api.setAiConfig({
+        enabled: status.enabled,
+        provider: status.provider,
+        model: status.model,
+        ...patch
+      })
+    )
+
+  const chooseMode = (next: Mode): void => {
+    if (next === 'none') void apply({ enabled: false })
+    else if (next === 'local') void apply({ enabled: true, provider: 'ollama', model: status.modelsByProvider.ollama })
+    else {
+      // zewnętrzny: dopiero po kluczu i zgodzie (przycisk „Włącz”), żeby nic nie poszło do sieci bez wiedzy użytkownika
+      setConsent(status.consent[cloud])
+      if (status.enabled && isCloud(status.provider)) return
+      setPendingCloud(true)
+    }
+  }
+  // wybrana opcja w formularzu; przed kliknięciem „Włącz” różni się od faktycznie działającego trybu
+  const shown: Mode = pendingCloud ? 'cloud' : mode
+  const cloudOpen = shown === 'cloud'
+
+  const pickCloud = (p: CloudProvider): void => {
+    setCloud(p)
+    setConsent(status.consent[p])
+    setKeyInput('')
+    // zmiana dostawcy przy działającym trybie zewnętrznym obowiązuje od razu, jeśli ma już klucz i zgodę
+    if (mode === 'cloud' && status.keys[p] && status.consent[p]) {
+      void apply({ provider: p, model: modelDraft[p] ?? status.modelsByProvider[p] })
+    }
+  }
+
+  const saveKey = (): void =>
+    void run(async () => {
+      await window.api.setAiKey(cloud, keyInput)
+      setKeyInput('')
+    })
+
+  const enableCloud = (): void =>
+    void run(async () => {
+      if (keyInput) {
+        await window.api.setAiKey(cloud, keyInput)
+        setKeyInput('')
+      }
+      await window.api.setAiConfig({
+        enabled: true,
+        provider: cloud,
+        model: modelDraft[cloud] ?? status.modelsByProvider[cloud],
+        consent: consent || status.consent[cloud]
+      })
+      setPendingCloud(false)
+    })
+
   const reprocess = async (): Promise<void> => {
     await window.api.reprocessAi()
-    setStatus(await window.api.getAiStatus())
+    await refresh()
     onChange()
   }
 
-  if (!status) return <p className="muted">Wczytywanie…</p>
-  const installed = status.models?.includes(status.model) ?? false
-  // zainstalowane modele plus wybrany, nawet jeśli go (jeszcze) nie ma
-  const options = [...new Set([...(status.models ?? []), status.model])]
+  const cloudModel = modelDraft[cloud] ?? status.modelsByProvider[cloud]
+  const hasKey = status.keys[cloud]
+  const mustConfirm = !status.consent[cloud]
+  const active = mode !== 'none'
+  const bad = status.state === 'unavailable' || status.state === 'no-model' || status.state === 'no-key'
 
   return (
     <>
       <h3>Asystent AI</h3>
       <p className="muted">
-        Lokalny model (Ollama) przypisuje nowym wiadomościom tagi z Twojej listy. Treść maili nie opuszcza tego
-        komputera. Dotyczy wiadomości z ostatnich 30 dni w Odebranych i Archiwum, a tagi dodane ręcznie nigdy nie są
-        zmieniane.
+        Model przypisuje wiadomościom tagi z Twojej listy (ostatnie 30 dni w Odebranych i Archiwum) oraz pisze skrót
+        otwartego maila. Tagi dodane ręcznie nigdy nie są zmieniane.
       </p>
-      <ul className="folder-toggles">
-        <li>
-          <label>
-            <span className="folder-toggle-text">
-              <span>Automatyczne tagowanie</span>
-              <span className="muted">Nowe wiadomości dostają tagi po synchronizacji</span>
-            </span>
+
+      <fieldset className="ai-modes">
+        <legend className="visually-hidden">Źródło modelu</legend>
+        {MODE_LABELS.map((m) => (
+          <label key={m.id} className={shown === m.id ? 'selected' : ''}>
             <input
-              type="checkbox"
-              role="switch"
-              className="switch"
-              checked={status.enabled}
-              onChange={(e) => void save({ enabled: e.target.checked })}
+              type="radio"
+              name="ai-mode"
+              checked={shown === m.id}
+              onChange={() => {
+                if (m.id !== 'cloud') setPendingCloud(false)
+                chooseMode(m.id)
+              }}
             />
+            <span>
+              <strong>{m.label}</strong>
+              <span className="muted">{m.hint}</span>
+            </span>
           </label>
-        </li>
-      </ul>
-      <dl className="ai-status">
-        <dt>Stan</dt>
-        <dd className={status.state === 'unavailable' || status.state === 'no-model' ? 'error' : ''}>
-          {AI_STATE_TEXT[status.state]}
-          {status.pending > 0 && status.state !== 'disabled' && (
-            <span className="muted"> · do otagowania: {status.pending}</span>
-          )}
-        </dd>
-        <dt>Model</dt>
-        <dd>
-          <select value={status.model} onChange={(e) => void save({ model: e.target.value })} aria-label="Model">
-            {options.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </dd>
-      </dl>
-      {status.models === null && (
+        ))}
+      </fieldset>
+
+      {mode === 'local' && !pendingCloud && (
+        <dl className="ai-status">
+          <dt>Model</dt>
+          <dd>
+            <select
+              value={status.model}
+              onChange={(e) => void apply({ model: e.target.value })}
+              aria-label="Model Ollamy"
+            >
+              {[...new Set([...(status.models ?? []), status.model])].map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </dd>
+        </dl>
+      )}
+      {mode === 'local' && !pendingCloud && status.models === null && (
         <p className="error">
           Nie można połączyć się z Ollamą. Uruchom ją poleceniem <code>ollama serve</code> (albo aplikacją Ollama).
         </p>
       )}
-      {status.models !== null && !installed && (
+      {mode === 'local' && !pendingCloud && status.models !== null && !status.models.includes(status.model) && (
         <p className="error">
           Modelu {status.model} nie ma w Ollamie. Pobierz go poleceniem <code>ollama pull {status.model}</code>.
         </p>
       )}
-      {status.error && status.state !== 'idle' && <p className="muted">{status.error}</p>}
+
+      {cloudOpen && (
+        <div className="ai-cloud">
+          <div className="ai-cloud-row">
+            <label>
+              Dostawca
+              <select value={cloud} onChange={(e) => pickCloud(e.target.value as CloudProvider)}>
+                {CLOUD_PROVIDERS.map((p) => (
+                  <option key={p} value={p}>
+                    {PROVIDER_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Model
+              <input
+                list={`models-${cloud}`}
+                value={cloudModel}
+                onChange={(e) => setModelDraft({ ...modelDraft, [cloud]: e.target.value })}
+                // przy działającym trybie zewnętrznym zmiana modelu obowiązuje po opuszczeniu pola
+                onBlur={() => {
+                  const value = cloudModel.trim()
+                  if (value && mode === 'cloud' && status.provider === cloud && value !== status.model) {
+                    void apply({ model: value })
+                  }
+                }}
+                aria-label="Model"
+              />
+              <datalist id={`models-${cloud}`}>
+                {MODEL_SUGGESTIONS[cloud].map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </label>
+          </div>
+          <label className="ai-key">
+            Klucz API {hasKey && <span className="muted">· zapisany w Keychain</span>}
+            <span className="ai-key-row">
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={hasKey ? 'wpisz nowy, aby zastąpić' : 'wklej klucz'}
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+              />
+              <button className="btn" onClick={saveKey} disabled={!keyInput.trim()}>
+                Zapisz klucz
+              </button>
+              {hasKey && (
+                <button className="btn" onClick={() => void run(() => window.api.setAiKey(cloud, null))}>
+                  Usuń
+                </button>
+              )}
+            </span>
+            <span className="muted">
+              Klucz zostaje w Keychain tego komputera, aplikacja nigdy go nie pokazuje. Wygenerujesz go na{' '}
+              <code>{KEY_HELP[cloud].replace('https://', '')}</code>.
+            </span>
+          </label>
+          {mustConfirm && (
+            <label className="ai-consent">
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+              <span>
+                Rozumiem, że do <strong>{PROVIDER_LABELS[cloud]}</strong> będą wysyłane: nadawca, temat i treść maili
+                (do 2000 znaków do tagowania, do 3000 do skrótu), także starszych niż dziś: w kolejce jest teraz{' '}
+                <strong>{status.pending}</strong> wiadomości. Płacisz u dostawcy za zapytania.
+              </span>
+            </label>
+          )}
+          {mode !== 'cloud' && (
+            <button
+              className="btn primary"
+              onClick={enableCloud}
+              disabled={(!hasKey && !keyInput.trim()) || (mustConfirm && !consent)}
+            >
+              Włącz {PROVIDER_LABELS[cloud]}
+            </button>
+          )}
+        </div>
+      )}
+
+      {active && (
+        <dl className="ai-status">
+          <dt>Stan</dt>
+          <dd className={bad ? 'error' : ''}>
+            {AI_STATE_TEXT[status.state]}
+            {status.pending > 0 && status.state !== 'disabled' && (
+              <span className="muted"> · do otagowania: {status.pending}</span>
+            )}
+          </dd>
+        </dl>
+      )}
+      {status.error && status.state !== 'idle' && active && <p className={bad ? 'error' : 'muted'}>{status.error}</p>}
       {error && <p className="error">{error}</p>}
       <p>
         <button className="btn" onClick={() => void reprocess()} disabled={!status.enabled}>
@@ -412,7 +611,72 @@ const MODES: { id: ThemeMode; label: string }[] = [
   { id: 'dark', label: 'Ciemny' }
 ]
 
-function Themes({ theme, onChange }: { theme: Theme; onChange: (t: Theme) => void }): JSX.Element {
+function Themes({
+  theme,
+  onChange,
+  custom
+}: {
+  theme: Theme
+  onChange: (t: Theme) => void
+  custom: CustomThemes
+}): JSX.Element {
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const inUse = (id: string): boolean => theme.mode === 'custom' && theme.customId === id
+
+  const attempt = (action: () => void): void => {
+    try {
+      action()
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const rename = (id: string): void =>
+    attempt(() => {
+      custom.rename(id, draft)
+      setRenaming(null)
+    })
+
+  const remove = (id: string, name: string): void => {
+    if (!window.confirm(`Usunąć motyw „${name}”?`)) return
+    custom.remove(id) // używany motyw: aplikacja wraca do motywu systemowego
+    setNotice(null)
+  }
+
+  // wartości z tego, co jest teraz na ekranie, żeby zmieniać gotowy zestaw zamiast zaczynać od zera
+  const download = async (): Promise<void> => {
+    const root = document.documentElement
+    const style = getComputedStyle(root)
+    const base = style.colorScheme === 'dark' ? 'dark' : 'light'
+    try {
+      const saved = await window.api.saveTextFile(
+        'zim-motyw.json',
+        buildTemplate(base, (key) => style.getPropertyValue(`--${key}`))
+      )
+      setError(null)
+      setNotice(saved ? 'Zapisano plik motywu. Zmień w nim kolory i wgraj go z powrotem.' : null)
+    } catch (err) {
+      setError(String(err).replace(/^.*Error: /, ''))
+    }
+  }
+
+  const upload = async (file: File | undefined): Promise<void> => {
+    if (!file) return
+    try {
+      const added = custom.add(parseThemeFile(await file.text()))
+      setError(null)
+      setNotice(`Dodano motyw „${added.name}”.`)
+    } catch (err) {
+      setNotice(null)
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   return (
     <>
       <h3>Motyw</h3>
@@ -421,25 +685,108 @@ function Themes({ theme, onChange }: { theme: Theme; onChange: (t: Theme) => voi
           <button
             key={m.id}
             className={theme.mode === m.id ? 'active' : ''}
-            onClick={() => onChange({ ...theme, mode: m.id })}
+            onClick={() => onChange({ mode: m.id })}
           >
             {m.label}
           </button>
         ))}
       </div>
-      <h3>Kolor akcentu</h3>
-      <div className="swatches">
-        {ACCENTS.map((a) => (
-          <button
-            key={a.value}
-            className={`swatch ${theme.accent === a.value ? 'active' : ''}`}
-            style={{ background: a.value }}
-            title={a.name}
-            aria-label={a.name}
-            onClick={() => onChange({ ...theme, accent: a.value })}
+
+      <h3>Stwórz własny</h3>
+      {custom.themes.length === 0 ? (
+        <p className="muted">Nie masz jeszcze własnych motywów.</p>
+      ) : (
+        <ul className="theme-list">
+          {custom.themes.map((t) => (
+            <li key={t.id}>
+              {renaming === t.id ? (
+                <>
+                  <input
+                    autoFocus
+                    value={draft}
+                    maxLength={40}
+                    aria-label={`Nowa nazwa motywu ${t.name}`}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      // Esc anuluje zmianę nazwy zamiast zamykać całe ustawienia
+                      if (e.key === 'Escape') {
+                        e.stopPropagation()
+                        setRenaming(null)
+                        setError(null)
+                      }
+                      if (e.key === 'Enter') rename(t.id)
+                    }}
+                  />
+                  <span className="account-actions">
+                    <button className="btn" onClick={() => setRenaming(null)}>
+                      Anuluj
+                    </button>
+                    <button className="btn primary" onClick={() => rename(t.id)}>
+                      Zapisz
+                    </button>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="theme-name">
+                    {t.name}
+                    {inUse(t.id) && <span className="tag-builtin">w użyciu</span>}
+                  </span>
+                  <span className="account-actions">
+                    <button
+                      className="btn"
+                      disabled={inUse(t.id)}
+                      onClick={() => onChange({ mode: 'custom', customId: t.id })}
+                    >
+                      Użyj
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        setDraft(t.name)
+                        setRenaming(t.id)
+                        setError(null)
+                      }}
+                    >
+                      Zmień nazwę
+                    </button>
+                    <button className="btn danger" onClick={() => remove(t.id, t.name)}>
+                      Usuń
+                    </button>
+                  </span>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="muted">Kliknij w przycisk pobierz by zmodyfikować motyw według własnego uznania</p>
+      <p>
+        <button className="btn" onClick={() => void download()}>
+          Pobierz
+        </button>
+      </p>
+      <p>
+        <label className="btn upload-btn">
+          Wgraj motyw
+          <input
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(e) => {
+              void upload(e.target.files?.[0])
+              e.target.value = '' // pozwala wgrać ten sam plik jeszcze raz po poprawce
+            }}
           />
-        ))}
-      </div>
+        </label>
+      </p>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && <p className="muted">{notice}</p>}
     </>
   )
 }
@@ -762,10 +1109,6 @@ function Shortcuts({
   return (
     <>
       <h3>Skróty klawiszowe</h3>
-      <p className="muted">
-        Kliknij skrót i wciśnij nowy znak, zapisze się od razu. Esc anuluje zmianę. Nawigacja j/k/e/r zacznie
-        działać razem z czytnikiem wiadomości.
-      </p>
       <table className="shortcuts">
         <tbody>
           {SHORTCUT_ACTIONS.map((a) => (

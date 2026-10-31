@@ -6,7 +6,7 @@ import Compose from './compose/Compose'
 import ScheduledList from './compose/ScheduledList'
 import ContactsScreen from './contacts/ContactsScreen'
 import Settings from './settings/Settings'
-import { useTheme } from './settings/theme'
+import { useCustomThemes, useTheme } from './settings/theme'
 import { useShortcuts } from './settings/shortcuts'
 import { FOLDERS, useHiddenFolders } from './settings/folders'
 import { useRightSidebarCollapsed, useSidebarCollapsed } from './settings/sidebar'
@@ -41,7 +41,10 @@ function SyncIndicator({ statuses }: { statuses: SyncStatus[] }): JSX.Element | 
 export default function App(): JSX.Element {
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [theme, setTheme] = useTheme()
+  // ustawiane skrótem „Szukaj”; lista otwiera pole wyszukiwania i zgłasza, że prośbę załatwiła
+  const [searchRequested, setSearchRequested] = useState(false)
+  const customThemes = useCustomThemes()
+  const [theme, setTheme] = useTheme(customThemes.themes)
   const [hiddenFolders, setFolderHidden] = useHiddenFolders()
   const [shortcuts, setShortcut] = useShortcuts()
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
@@ -167,6 +170,27 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Szukaj i Ustawienia działają wszędzie poza polami tekstowymi, także z otwartego czytnika
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const { shortcuts, blocked } = keyRef.current
+      if (blocked || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return
+      if (e.key === shortcuts.search) {
+        setOpenId(null)
+        setView((v) => (v === 'scheduled' ? 'inbox' : v)) // zaplanowane nie mają wyszukiwania
+        setSearchRequested(true)
+      } else if (e.key === shortcuts.settings) {
+        setOpenId(null)
+        setSettingsOpen(true)
+      } else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // C = nowa wiadomość, G i litera = przejście do folderu (nie w czytniku, tam działają skróty wiadomości)
   const navRef = useRef({ blocked: false, hidden: hiddenFolders, accounts: accounts.length, reader: false })
   navRef.current = { blocked: composeOpen || settingsOpen, hidden: hiddenFolders, accounts: accounts.length, reader: openId !== null }
@@ -178,6 +202,8 @@ export default function App(): JSX.Element {
       if (nav.blocked || nav.reader || e.metaKey || e.ctrlKey || e.altKey) return
       const t = e.target as HTMLElement
       if (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return
+      // znak przypisany przez użytkownika do akcji ma pierwszeństwo przed C i G
+      if (Object.values(keyRef.current.shortcuts).includes(e.key)) return
       const key = e.key.toLowerCase()
       if (Date.now() - gAt < 1500) {
         gAt = 0
@@ -325,6 +351,8 @@ export default function App(): JSX.Element {
           search={search}
           searchActive={query !== ''}
           onSearch={setSearch}
+          searchRequested={searchRequested}
+          onSearchHandled={() => setSearchRequested(false)}
         />
       )}
       <aside className="sidebar sidebar-right">
@@ -361,6 +389,7 @@ export default function App(): JSX.Element {
         <Settings
           theme={theme}
           onThemeChange={setTheme}
+          customThemes={customThemes}
           shortcuts={shortcuts}
           onShortcutChange={setShortcut}
           hiddenFolders={hiddenFolders}

@@ -1,13 +1,17 @@
 import type { AiConfig, Tag } from '@shared/types'
 import type { ClassifyInput } from '../db/classification'
-import { PRIORITY_TAGS } from '../db/tags'
-import { chat } from './ollama'
+import { isCloud } from '@shared/ai'
+import type { ChatFn } from './providers'
 
+/** Lokalny model: krótko, bo czas idzie głównie na czytanie promptu (zob. pomiary w historii projektu) */
 const BODY_MAX = 500
+/** Model w chmurze czyta szybko, więc dostaje więcej treści, co poprawia trafność tagów */
+const CLOUD_BODY_MAX = 2000
 /** Poza priorytetem wiadomość dostaje najwyżej jeden tag opisujący, czym jest */
 const TAGS_MAX = 1
 
-const isPriority = (t: Tag): boolean => PRIORITY_TAGS.some((n) => n.toLowerCase() === t.name.toLowerCase())
+/** Tagi ważności to wbudowane tagi systemowe; rozpoznajemy je po kluczu, więc zmiana nazwy niczego nie psuje */
+const isPriority = (t: Tag): boolean => !!t.system
 
 const describe = (tags: Tag[]): string =>
   tags.map((t) => (t.description ? `- ${t.name}: ${t.description}` : `- ${t.name}`)).join('\n')
@@ -25,7 +29,7 @@ export function cleanBody(text: string, max = BODY_MAX): string {
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned
 }
 
-export function buildPrompt(tags: Tag[], mail: ClassifyInput): { system: string; user: string } {
+export function buildPrompt(tags: Tag[], mail: ClassifyInput, bodyMax = BODY_MAX): { system: string; user: string } {
   const priority = tags.filter(isPriority)
   const others = tags.filter((t) => !isPriority(t))
   const system = [
@@ -50,7 +54,7 @@ export function buildPrompt(tags: Tag[], mail: ClassifyInput): { system: string;
     `Od: ${mail.from}`,
     `Temat: ${mail.subject}`,
     mail.attachments.length > 0 ? `Załączniki: ${mail.attachments.join(', ')}` : null,
-    `Treść:\n${cleanBody(mail.body)}`
+    `Treść:\n${cleanBody(mail.body, bodyMax)}`
   ]
     .filter((line) => line !== null)
     .join('\n')
@@ -94,8 +98,11 @@ export function parseTagIds(raw: string, tags: Tag[]): number[] {
 
 export type Classify = (tags: Tag[], mail: ClassifyInput, config: AiConfig) => Promise<number[]>
 
-export const classifyWithOllama: Classify = async (tags, mail, config) => {
-  const { system, user } = buildPrompt(tags, mail)
-  const raw = await chat({ model: config.model, system, user, schema: schemaFor(tags) })
-  return parseTagIds(raw, tags)
-}
+/** Tagowanie przez dowolnego dostawcę; `chat` wybiera, do kogo pójdzie zapytanie. */
+export const classifyWith =
+  (chat: ChatFn): Classify =>
+  async (tags, mail, config) => {
+    const { system, user } = buildPrompt(tags, mail, isCloud(config.provider) ? CLOUD_BODY_MAX : BODY_MAX)
+    const raw = await chat({ config, system, user, schema: schemaFor(tags) })
+    return parseTagIds(raw, tags)
+  }
