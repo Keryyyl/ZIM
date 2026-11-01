@@ -10,7 +10,18 @@ function formatDate(ms: number): string {
 }
 
 /** Ekran kontaktu w prawym pasku (podmienia listę): dane, ostatnie 3 maile w obie strony i linki do serwisów. */
-export default function ContactCard({ contact, onClose, onOpenMessage }: { contact: ContactInit; onClose: () => void; onOpenMessage: (id: number) => void }): JSX.Element {
+/** `onCompose` brak = nie ma jeszcze konta, z którego można wysłać; adres jest wtedy zwykłym tekstem */
+export default function ContactCard({
+  contact,
+  onClose,
+  onOpenMessage,
+  onCompose
+}: {
+  contact: ContactInit
+  onClose: () => void
+  onOpenMessage: (id: number) => void
+  onCompose?: () => void
+}): JSX.Element {
   const [mail, setMail] = useState<ContactMail[] | null>(null)
 
   useEffect(() => {
@@ -38,7 +49,13 @@ export default function ContactCard({ contact, onClose, onOpenMessage }: { conta
         <div className="contact-card-id">
           <Avatar photo={contact.photo ?? null} name={contact.name} size={72} />
           <div>
-            <a href={`mailto:${contact.email}`}>{contact.email}</a>
+            {onCompose ? (
+              <button className="contact-email" onClick={onCompose} title="Napisz wiadomość">
+                {contact.email}
+              </button>
+            ) : (
+              <span>{contact.email}</span>
+            )}
             {contact.city && <div className="muted">{contact.city}</div>}
           </div>
         </div>

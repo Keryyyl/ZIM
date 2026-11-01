@@ -50,7 +50,12 @@ export default function ContactsScreen({ canCompose, onCompose, onHistory, onOpe
     <div className={`contacts ${deleting ? 'deleting' : ''}`}>
       {shown ? (
         <>
-          <ContactCard contact={shown} onClose={() => setShown(null)} onOpenMessage={onOpenMessage} />
+          <ContactCard
+            contact={shown}
+            onClose={() => setShown(null)}
+            onOpenMessage={onOpenMessage}
+            onCompose={canCompose ? () => onCompose(shown.email) : undefined}
+          />
           <footer className="contacts-footer">
             <span className="contacts-brand">ZIM</span>
             <button

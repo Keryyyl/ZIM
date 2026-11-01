@@ -75,8 +75,9 @@ export default function Compose({ accounts, defaultAccountId, onClose, onDone, i
   }, [])
   useEffect(() => {
     // bez konta z panelu wybieramy nadawcę na początku, inaczej od razu adresatów
+    // (albo temat, gdy adresat jest już wpisany, np. z kontaktu)
     if (defaultAccountId === null && accounts.length > 1) firstFieldRef.current?.focus()
-    else document.getElementById('compose-to')?.focus()
+    else document.getElementById(initial?.to ? 'compose-subject' : 'compose-to')?.focus()
   }, [])
 
   /** Adresaci łącznie z wpisanym, niezatwierdzonym tekstem */

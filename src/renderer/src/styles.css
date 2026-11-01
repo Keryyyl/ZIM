@@ -1793,9 +1793,48 @@ kbd {
 .tag-add {
   position: relative;
 }
-.tag-add .btn {
-  padding: 2px 8px;
-  font-size: 12px;
+/* „+ Tag” i „Tagi AI”: tej samej wielkości co chipy tagów obok */
+.tag-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tag-action:hover,
+.tag-action[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--text) 35%, transparent);
+  color: var(--text);
+}
+.tag-action.ai {
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+}
+.tag-action.ai:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
+}
+.tag-action.ai:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+.tag-action .spinner {
+  width: 8px;
+  height: 8px;
+  border-width: 1.5px;
+}
+.tag-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .tag-menu {
   position: absolute;
@@ -2162,10 +2201,22 @@ kbd {
   align-items: center;
   gap: 16px;
 }
-.contact-card-id a,
+.contact-card-id .contact-email,
 .contact-card-links a {
   color: var(--accent);
   text-decoration: none;
+}
+.contact-email {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.contact-email:hover {
+  text-decoration: underline;
 }
 .contact-card-desc {
   margin: 0;
@@ -2560,4 +2611,44 @@ ul.summary-text {
 .upload-btn {
   display: inline-block;
   cursor: pointer;
+}
+
+/* Ustawienia: O aplikacji */
+.about {
+  max-width: 520px;
+}
+.about-head h3 {
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--text);
+  margin: 0 0 2px;
+}
+.about-head p {
+  margin: 0;
+  font-size: 13px;
+}
+.about-lead {
+  margin: 20px 0;
+  line-height: 1.5;
+}
+.about-principles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.about-principles li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.about-foot {
+  margin: 24px 0 0;
+  font-size: 12px;
 }

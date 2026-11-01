@@ -27,6 +27,23 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
   const closeRef = useRef<HTMLButtonElement>(null)
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [picking, setPicking] = useState(false)
+  const tagAddRef = useRef<HTMLSpanElement>(null)
+
+  // klik gdziekolwiek poza przyciskiem „+ Tag” i jego listą zamyka listę
+  useEffect(() => {
+    if (!picking) return
+    const onDown = (e: MouseEvent): void => {
+      if (!tagAddRef.current?.contains(e.target as Node)) setPicking(false)
+    }
+    // treść maila jest w iframe, kliknięcia w nią nie docierają do dokumentu, ale zabierają mu fokus
+    const onBlur = (): void => setPicking(false)
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [picking])
   const [tagging, setTagging] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
 
@@ -126,8 +143,8 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
                 {message.tags.map((t) => (
                   <TagChip key={t.id} tag={t} onRemove={() => void toggleTag(t, false)} />
                 ))}
-                <span className="tag-add">
-                  <button className="btn" onClick={() => setPicking((p) => !p)} aria-expanded={picking}>
+                <span className="tag-add" ref={tagAddRef}>
+                  <button className="tag-action" onClick={() => setPicking((p) => !p)} aria-expanded={picking}>
                     + Tag
                   </button>
                   {picking && (
@@ -157,11 +174,20 @@ export default function Reader({ id, accountsById, onClose, onChanged }: Props):
                   )}
                 </span>
                 <button
-                  className="btn"
+                  className="tag-action ai"
                   onClick={() => void suggestTags()}
                   disabled={tagging}
+                  aria-busy={tagging}
                   title="Asystent AI dobierze tagi do tej wiadomości (zastąpi swoje wcześniejsze, ręcznych nie rusza)"
                 >
+                  {tagging ? (
+                    <span className="spinner" aria-hidden />
+                  ) : (
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden>
+                      <path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z" />
+                      <path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z" />
+                    </svg>
+                  )}
                   {tagging ? 'Taguję…' : 'Tagi AI'}
                 </button>
               </div>

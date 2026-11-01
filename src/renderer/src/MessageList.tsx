@@ -104,7 +104,7 @@ export default function MessageList(props: Props): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const toggleOne = (index: number, e: MouseEvent<HTMLInputElement>): void => {
+  const toggleOne = (index: number, e: MouseEvent<HTMLElement>): void => {
     const id = messages[index].id
     const checked = !selection.has(id)
     const next = new Set([...selection].filter((x) => visibleIds.has(x)))
@@ -316,6 +316,11 @@ export default function MessageList(props: Props): JSX.Element {
               role="button"
               tabIndex={0}
               onClick={() => onOpen(m.id)}
+              // prawy przycisk działa jak checkbox (z Shift zaznacza zakres), zamiast menu kontekstowego
+              onContextMenu={(e) => {
+                e.preventDefault()
+                toggleOne(i, e)
+              }}
               onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && onOpen(m.id)}
             >
               <input

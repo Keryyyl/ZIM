@@ -1149,15 +1149,48 @@ function Shortcuts({
   )
 }
 
+const PRINCIPLES = [
+  {
+    title: 'Mniej klikania',
+    text: 'Reguły i asystent AI tagują pocztę za Ciebie, a Odebrane układają się według ważności. Do Ciebie trafia to, co naprawdę wymaga reakcji.'
+  },
+  {
+    title: 'Wszystko w jednym miejscu',
+    text: 'Wiele skrzynek w jednej liście, kontakty z historią korespondencji pod ręką i skróty klawiszowe do najczęstszych akcji.'
+  },
+  {
+    title: 'Twoje dane zostają u Ciebie',
+    text: 'Poczta leży w lokalnej bazie na tym komputerze, a hasła i klucze w pęku kluczy systemu. Domyślny model AI działa lokalnie; model w chmurze włączasz tylko sam, za wyraźną zgodą.'
+  },
+  {
+    title: 'Bezpieczne czytanie',
+    text: 'Treść HTML jest oczyszczana i wyświetlana w izolowanym oknie, a zdalne obrazki są blokowane, więc nadawca nie dowie się, że otworzyłeś wiadomość.'
+  }
+]
+
 function About(): JSX.Element {
   return (
-    <>
-      <h3>ZIM</h3>
-      <p className="muted">Wersja 0.1.0</p>
-      <p>
-        Desktopowy klient mailowy: wiele skrzynek w jednej, tagi, reguły i klasyfikacja LLM. Dane
-        i hasła zostają lokalnie na tym komputerze.
+    <div className="about">
+      <header className="about-head">
+        <h3>ZIM</h3>
+        <p className="muted">Wersja 0.1.0 · część ekosystemu ZINX</p>
+      </header>
+      <p className="about-lead">
+        <strong>ZINX: Zero Interactions Needed.</strong> ZIM to klient poczty, którego zadaniem jest
+        zminimalizować liczbę interakcji z mailami. Zamiast przekopywać skrzynkę, dostajesz to, co
+        ważne, a resztą aplikacja zajmuje się sama.
       </p>
-    </>
+      <ul className="about-principles">
+        {PRINCIPLES.map((p) => (
+          <li key={p.title}>
+            <strong>{p.title}</strong>
+            <span className="muted">{p.text}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="muted about-foot">
+        Zbudowane na Electronie, Reacie i SQLite, z pocztą przez IMAP/SMTP i lokalnym AI przez Ollamę.
+      </p>
+    </div>
   )
 }
